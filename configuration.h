@@ -820,6 +820,7 @@ typedef struct settings
       bool input_remap_binds_enable;
       bool input_remap_sort_by_controller_enable;
       bool input_assign_ports_on_button_press;
+      bool input_share_port1;
       bool input_trigger_full_range;
       bool input_autodetect_enable;
       bool input_sensors_enable;

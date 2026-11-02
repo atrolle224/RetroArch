@@ -94,6 +94,11 @@ S_BOOL(input_assign_ports_on_button_press, INPUT_ASSIGN_PORTS_ON_BUTTON_PRESS,
       false, SD_FLAG_ADVANCED, 0, 0,
       "Assign Ports on First Button Press",
       "When content starts, no controller is mapped to a core port; each is given the next free core port when a button is first pressed on it. Applies from the next content start.")
+S_BOOL(input_share_port1, INPUT_SHARE_PORT1,
+      "input_share_port1",
+      DEFAULT_INPUT_SHARE_PORT1, SD_FLAG_NONE, 0, 0,
+      "All Controllers Play as Port 1",
+      "Every connected controller controls core port 1 together, such as a handheld's own controls and a Bluetooth controller. A port set by hand or in a remap file still applies. Overrides 'Assign Ports on First Button Press'. Applies from the next content start.")
 S_UINT_EX(input_assign_ports_keyboard, INPUT_ASSIGN_PORTS_KEYBOARD,
       "input_assign_ports_keyboard",
       0, SD_FLAG_ADVANCED, SDESC_RANGE_MINMAX, 0, 0, 1, 1, 0, setting_action_ok_uint, setting_get_string_representation_assign_ports_keyboard, NULL, NULL, NULL, NULL, ST_UI_TYPE_UINT_COMBOBOX,

@@ -2053,6 +2053,13 @@
 /* Off: the hotkey enabler reaches the game as it is pressed */
 #define DEFAULT_INPUT_HOTKEY_TAP_DELAY 0
 #define DEFAULT_INPUT_HOTKEY_DEVICE_MERGE false
+
+/* Handhelds: the built-in controls and a connected controller both play as port 1 */
+#if defined(ANDROID)
+#define DEFAULT_INPUT_SHARE_PORT1 true
+#else
+#define DEFAULT_INPUT_SHARE_PORT1 false
+#endif
 #define DEFAULT_INPUT_HOTKEY_FOLLOWS_PLAYER1 false
 
 #define DEFAULT_GFX_THUMBNAILS_DEFAULT 3

@@ -124,6 +124,9 @@ public final class RetroActivityFuture extends RetroActivityCamera {
     // Check for Android UI specific parameters
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
       String refresh = getIntent().getStringExtra("REFRESH");
+      /* RG477M build: 90 Hz unless asked otherwise */
+      if (refresh == null)
+        refresh = "90";
 
       /* If REFRESH parameter is provided then try to set refreshrate
        * accordingly - unless a display mode has been chosen

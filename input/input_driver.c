@@ -17315,7 +17315,9 @@ static bool input_first_press_blocked(void)
 
 bool input_first_press_enabled(void)
 {
-   return config_get_ptr()->bools.input_assign_ports_on_button_press
+   settings_t *settings = config_get_ptr();
+   return settings->bools.input_assign_ports_on_button_press
+      && !settings->bools.input_share_port1
       && !input_first_press_blocked();
 }
 
@@ -17514,6 +17516,7 @@ void input_remapping_defaults_into(settings_t *settings)
 {
    unsigned i, j;
    bool first_press = input_first_press_enabled();
+   bool share_port1 = settings->bools.input_share_port1;
 
    for (i = 0; i < MAX_USERS; i++)
    {
@@ -17535,7 +17538,7 @@ void input_remapping_defaults_into(settings_t *settings)
       /* Controller port remaps: none under first-press assignment */
       configuration_set_uint(settings,
             settings->uints.input_remap_ports[i],
-            first_press ? MAX_USERS : i);
+            share_port1 ? 0 : first_press ? MAX_USERS : i);
    }
 }
 

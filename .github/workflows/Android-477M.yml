@@ -1,0 +1,61 @@
+# The RG477M build: the AArch64 APK only ("RetroArch 477M", com.retroarch.rg477m).
+name: Android 477M
+
+on:
+  push:
+    branches: [rg477m]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: android-477m-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Link with lld
+      run: sh .github/workflows/scripts/use-lld.sh
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'temurin'
+        cache: 'gradle'
+
+    - name: APK
+      run: |
+        cd pkg/android/phoenix
+        set -o pipefail
+        for i in 1 2 3; do
+          ./gradlew assembleAarch64Debug \
+            -Dorg.gradle.internal.repository.max.tentatives=6 \
+            -Dorg.gradle.internal.repository.initial.backoff=2000 \
+            2>&1 | tee gradle.log && break
+          grep -qE 'Could not (resolve|GET|HEAD|download)' gradle.log \
+            && [ $i != 3 ] || exit 1
+          sleep 30
+        done
+        ls -l build/outputs/apk/aarch64/debug/
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: retroarch-477m-arm64
+        path: pkg/android/phoenix/build/outputs/apk/aarch64/debug/*.apk
+        if-no-files-found: error
+
+    - name: Delete older builds of this workflow
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh api "repos/${{ github.repository }}/actions/workflows/Android-477M.yml/runs?per_page=50" \
+          --jq '.workflow_runs[] | select(.id != ${{ github.run_id }}) | .id' |
+          while read -r id; do gh api -X DELETE "repos/${{ github.repository }}/actions/runs/$id" >/dev/null || true; done
