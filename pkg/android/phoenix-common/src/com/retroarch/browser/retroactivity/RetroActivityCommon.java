@@ -2105,7 +2105,10 @@ public class RetroActivityCommon extends NativeActivity
    * are installed to.
    */
   public void updateSymlinks() {
-    if(!isPlayStoreBuild()) return;
+    if(!isPlayStoreBuild()) {
+      linkBundledCores();
+      return;
+    }
 
     synchronized (mSymlinkLock) {
       List<String> availableCores = Arrays.asList(getAvailableCores());
@@ -2114,6 +2117,32 @@ public class RetroActivityCommon extends NativeActivity
       traverseFilesystem(getFilesDir(), availableCores, prefs, corePath);
       traverseFilesystem(new File(getApplicationInfo().nativeLibraryDir),
               availableCores, prefs, corePath);
+    }
+  }
+
+  /**
+   * Links cores packed into the APK as lib<core>_libretro_android.so
+   * (the RG477M build's DOSBox Pure) into the cores folder, unless a
+   * downloaded core of that name is already there.
+   */
+  private void linkBundledCores() {
+    File[] list = new File(getApplicationInfo().nativeLibraryDir).listFiles();
+    if(list == null) return;
+
+    synchronized (mSymlinkLock) {
+      String corePath = getCorePath();
+      for(int i = 0; i < list.length; i++) {
+        String name = list[i].getName();
+        if(!name.startsWith("lib") || !name.endsWith("_libretro_android.so")) continue;
+
+        File link = new File(corePath + name.substring(3));
+        if(link.exists()) continue;
+        link.delete();
+        try {
+          Os.symlink(list[i].getAbsolutePath(), link.getAbsolutePath());
+        } catch (Exception e) {
+        }
+      }
     }
   }
 

@@ -1,4 +1,5 @@
-# The RG477M build: the AArch64 APK only ("RetroArch 477M", com.retroarch.rg477m).
+# The RG477M build: the AArch64 APK only ("RetroArch 477M", com.retroarch.rg477m), with
+# DOSBox Pure packed in (linked into its cores folder at start).
 name: Android 477M
 
 on:
@@ -30,6 +31,15 @@ jobs:
         java-version: '25'
         distribution: 'temurin'
         cache: 'gradle'
+
+    - name: DOSBox Pure core
+      run: |
+        mkdir -p pkg/android/phoenix-common/libs/arm64-v8a
+        curl -fsSL --retry 5 -o dosbox_pure.zip \
+          https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/dosbox_pure_libretro_android.so.zip
+        unzip -p dosbox_pure.zip dosbox_pure_libretro_android.so \
+          > pkg/android/phoenix-common/libs/arm64-v8a/libdosbox_pure_libretro_android.so
+        test -s pkg/android/phoenix-common/libs/arm64-v8a/libdosbox_pure_libretro_android.so
 
     - name: APK
       run: |
