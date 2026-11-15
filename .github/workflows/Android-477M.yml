@@ -32,7 +32,28 @@ jobs:
         distribution: 'temurin'
         cache: 'gradle'
 
-    - name: Cores
+    - name: The RetroArch folder (config, CRT shaders, controller profiles)
+      run: |
+        a=pkg/android/phoenix/assets/rg477m/RetroArch
+        mkdir -p "$a"
+        git clone -q --depth 1 https://github.com/atrolle224/GammaOSNext gos
+        cp -r gos/pegasus/RetroArch/. "$a/"
+        for kind in slang glsl; do
+          git clone -q --depth 1 "https://github.com/libretro/$kind-shaders" sh-$kind
+          mkdir -p "$a/shaders/shaders_$kind"
+          for d in crt blurs include; do
+            [ -d sh-$kind/$d ] && cp -r sh-$kind/$d "$a/shaders/shaders_$kind/"
+          done
+        done
+        git clone -q --depth 1 https://github.com/libretro/retroarch-joypad-autoconfig joy
+        mkdir -p "$a/autoconfig/android"
+        cp -n joy/android/*.cfg "$a/autoconfig/android/"
+        test -f "$a/retroarch.cfg"
+        test -f "$a/config/global.slangp"
+        rm -rf gos sh-slang sh-glsl joy
+        du -sh "$a"
+
+
       run: |
         mkdir -p pkg/android/phoenix-common/libs/arm64-v8a
         for core in $CORES; do

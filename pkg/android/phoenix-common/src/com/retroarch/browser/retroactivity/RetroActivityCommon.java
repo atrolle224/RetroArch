@@ -70,6 +70,9 @@ import android.widget.TextView;
 
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -229,6 +232,7 @@ public class RetroActivityCommon extends NativeActivity
         @Override
         public void run() {
           try {
+            provisionRg477m();
             cleanupSymlinks();
             updateSymlinks();
           } finally {
@@ -2117,6 +2121,55 @@ public class RetroActivityCommon extends NativeActivity
       traverseFilesystem(getFilesDir(), availableCores, prefs, corePath);
       traverseFilesystem(new File(getApplicationInfo().nativeLibraryDir),
               availableCores, prefs, corePath);
+    }
+  }
+
+  /**
+   * RG477M build: puts the packed RetroArch folder (assets/rg477m/RetroArch:
+   * the config, the CRT shaders and global presets, controller profiles)
+   * into Internal storage/RetroArch, each file only where none is, once per
+   * install or update. Without storage access yet it is tried next start.
+   */
+  private void provisionRg477m() {
+    File root = new File(Environment.getExternalStorageDirectory(), "RetroArch");
+    try {
+      long stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+      File marker = new File(root, ".rg477m-" + stamp);
+      if (marker.exists()) return;
+      if (!root.isDirectory() && !root.mkdirs()) return;
+      copyAssets("rg477m/RetroArch", root);
+      marker.createNewFile();
+    } catch (Exception e) {
+    }
+  }
+
+  private void copyAssets(String path, File to) throws java.io.IOException {
+    String[] names = getAssets().list(path);
+    if (names != null && names.length > 0) {
+      to.mkdirs();
+      for (String name : names)
+        copyAssets(path + "/" + name, new File(to, name));
+      return;
+    }
+    if (to.exists()) return;
+    InputStream in;
+    try {
+      in = getAssets().open(path);
+    } catch (java.io.IOException e) {
+      return; /* an empty folder */
+    }
+    try {
+      OutputStream out = new FileOutputStream(to);
+      try {
+        byte[] buf = new byte[65536];
+        int n;
+        while ((n = in.read(buf)) > 0)
+          out.write(buf, 0, n);
+      } finally {
+        out.close();
+      }
+    } finally {
+      in.close();
     }
   }
 
