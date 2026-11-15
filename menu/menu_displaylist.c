@@ -9979,6 +9979,14 @@ unsigned menu_displaylist_build_list(
          {
             gfx_ctx_flags_t flags;
 
+#if defined(ANDROID) && (defined(HAVE_GLSL) || defined(HAVE_SLANG))
+            /* RG477M build: the CRT shaders' switch, beside the rest */
+            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                     MENU_ENUM_LABEL_VIDEO_SHADERS_ENABLE,
+                     PARSE_ONLY_BOOL, false) == 0)
+               count++;
+#endif
+
             {
                static const menu_displaylist_settings_row_t dl_rows_6[] = {
                   { MENU_ENUM_LABEL_VIDEO_OUTPUT_SETTINGS, PARSE_ACTION, false },
