@@ -1,5 +1,5 @@
 # The RG477M build: the AArch64 APK only ("RetroArch 477M", com.retroarch.rg477m), with
-# DOSBox Pure packed in (linked into its cores folder at start).
+# the cores for its consoles packed in (linked into its cores folder at start).
 name: Android 477M
 
 on:
@@ -32,14 +32,21 @@ jobs:
         distribution: 'temurin'
         cache: 'gradle'
 
-    - name: DOSBox Pure core
+    - name: Cores
       run: |
         mkdir -p pkg/android/phoenix-common/libs/arm64-v8a
-        curl -fsSL --retry 5 -o dosbox_pure.zip \
-          https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/dosbox_pure_libretro_android.so.zip
-        unzip -p dosbox_pure.zip dosbox_pure_libretro_android.so \
-          > pkg/android/phoenix-common/libs/arm64-v8a/libdosbox_pure_libretro_android.so
-        test -s pkg/android/phoenix-common/libs/arm64-v8a/libdosbox_pure_libretro_android.so
+        for core in $CORES; do
+          curl -fsSL --retry 5 -o core.zip \
+            "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/${core}_libretro_android.so.zip"
+          unzip -p core.zip "${core}_libretro_android.so" \
+            > "pkg/android/phoenix-common/libs/arm64-v8a/lib${core}_libretro_android.so"
+          test -s "pkg/android/phoenix-common/libs/arm64-v8a/lib${core}_libretro_android.so"
+        done
+      env:
+        CORES: >-
+          dosbox_pure fceumm nestopia snes9x mgba gambatte genesis_plus_gx picodrive
+          mednafen_ngp mednafen_pce_fast mednafen_wswan stella handy pcsx_rearmed
+          swanstation mupen64plus_next_gles3 ppsspp melonds fbneo mame2003_plus
 
     - name: APK
       run: |

@@ -1849,6 +1849,15 @@ static void android_env_derive_config_path(JNIEnv *env, jobject activity)
    }
    (*env)->DeleteLocalRef(env, activity_class);
 
+   /* RG477M build: the shared config the Daijishou cards also load */
+   if (path_is_valid("/storage/emulated/0/RetroArch/retroarch.cfg"))
+   {
+      strlcpy(android_config_path,
+            "/storage/emulated/0/RetroArch/retroarch.cfg",
+            sizeof(android_config_path));
+      return;
+   }
+
    if (*external)
    {
       fill_pathname_join(candidate, external, "retroarch.cfg",
