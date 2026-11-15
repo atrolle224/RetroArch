@@ -2131,6 +2131,11 @@ public class RetroActivityCommon extends NativeActivity
    * install or update. Without storage access yet it is tried next start.
    */
   private void provisionRg477m() {
+    try {
+      /* the packed cores' info files, so the menus name them */
+      copyAssets("rg477m/info", new File(getApplicationInfo().dataDir, "info"));
+    } catch (Exception e) {
+    }
     File root = new File(Environment.getExternalStorageDirectory(), "RetroArch");
     try {
       long stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;

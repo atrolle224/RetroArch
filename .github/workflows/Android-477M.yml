@@ -33,6 +33,11 @@ jobs:
         cache: 'gradle'
 
     - name: The RetroArch folder (config, CRT shaders, controller profiles)
+      env:
+        CORES: >-
+          dosbox_pure fceumm nestopia snes9x mgba gambatte genesis_plus_gx picodrive
+          mednafen_ngp mednafen_pce_fast mednafen_wswan stella handy pcsx_rearmed
+          swanstation mupen64plus_next_gles3 ppsspp melonds fbneo mame2003_plus
       run: |
         a=pkg/android/phoenix/assets/rg477m/RetroArch
         mkdir -p "$a"
@@ -52,8 +57,20 @@ jobs:
         test -f "$a/config/global.slangp"
         rm -rf gos sh-slang sh-glsl joy
         du -sh "$a"
+        # the packed cores' info files (Cores step's list)
+        git clone -q --depth 1 https://github.com/libretro/libretro-core-info info-src
+        mkdir -p pkg/android/phoenix/assets/rg477m/info
+        for core in $CORES; do
+          cp "info-src/${core}_libretro.info" pkg/android/phoenix/assets/rg477m/info/
+        done
+        rm -rf info-src
 
-
+    - name: Cores
+      env:
+        CORES: >-
+          dosbox_pure fceumm nestopia snes9x mgba gambatte genesis_plus_gx picodrive
+          mednafen_ngp mednafen_pce_fast mednafen_wswan stella handy pcsx_rearmed
+          swanstation mupen64plus_next_gles3 ppsspp melonds fbneo mame2003_plus
       run: |
         mkdir -p pkg/android/phoenix-common/libs/arm64-v8a
         for core in $CORES; do
@@ -63,11 +80,6 @@ jobs:
             > "pkg/android/phoenix-common/libs/arm64-v8a/lib${core}_libretro_android.so"
           test -s "pkg/android/phoenix-common/libs/arm64-v8a/lib${core}_libretro_android.so"
         done
-      env:
-        CORES: >-
-          dosbox_pure fceumm nestopia snes9x mgba gambatte genesis_plus_gx picodrive
-          mednafen_ngp mednafen_pce_fast mednafen_wswan stella handy pcsx_rearmed
-          swanstation mupen64plus_next_gles3 ppsspp melonds fbneo mame2003_plus
 
     - name: APK
       run: |
