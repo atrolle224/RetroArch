@@ -240,6 +240,10 @@ bool android_get_vfs_authorized_locations(
 #include "configuration.h"
 #include "list_special.h"
 #include "core_option_manager.h"
+#ifdef HAVE_CORE_LOAD_CHECK
+#include "core_load_check.h"
+#include "core_trust_runtime.h"
+#endif
 #ifdef HAVE_CHEATS
 #include "cheat_manager.h"
 #endif
@@ -839,6 +843,56 @@ void libretro_get_environment_info(
    runloop_st->flags &= ~RUNLOOP_FLAG_IGNORE_ENVIRONMENT_CB;
 }
 
+/* No check: where there is no trust store or checks are off, or on a
+ * worker whose core the main thread found none for. Any thread. */
+dylib_t runloop_core_dylib_open(const char *path, bool quiet)
+{
+#if defined(ANDROID)
+   /* Another app's intent can name the core.  The resolved path that
+    * passed the check is the one opened, so no symlink on the way can
+    * be swapped between the check and the open. */
+   char real_path[PATH_MAX_LENGTH];
+   if (!android_core_path_resolve(path, real_path, sizeof(real_path)))
+   {
+      if (!quiet)
+         RARCH_ERR("[Core] Not loading \"%s\": not found in the app's own folders.\n",
+               path);
+      /* Leave no stale loader error for the failure path to print */
+      dylib_error();
+      return NULL;
+   }
+   return dylib_load(real_path);
+#else
+   return dylib_load(path);
+#endif
+}
+
+/* Main thread: every core is opened here, once it is checked */
+dylib_t runloop_core_dylib_load(const char *path, bool quiet)
+{
+#ifdef HAVE_CORE_LOAD_CHECK
+   dylib_t lib = NULL;
+#if defined(ANDROID)
+   /* The check reads the real path the open uses */
+   char real_path[PATH_MAX_LENGTH];
+   if (!android_core_path_resolve(path, real_path, sizeof(real_path)))
+      return runloop_core_dylib_open(path, quiet);
+   path = real_path;
+#endif
+   switch (core_load_check_open(path, &lib))
+   {
+      case CORE_LOAD_GATE_OPENED:
+         return lib;
+      case CORE_LOAD_GATE_REFUSED:
+         dylib_error();
+         return NULL;
+      case CORE_LOAD_GATE_OFF:
+         break;
+   }
+#endif
+   return runloop_core_dylib_open(path, quiet);
+}
+
 /* Whether the core path is resolved through symlinks before it is
  * opened (and saved to history) */
 static bool load_dynamic_core_resolves_symlinks(void)
@@ -854,6 +908,55 @@ static bool load_dynamic_core_resolves_symlinks(void)
    return true;
 #endif
 }
+
+#ifdef HAVE_CORE_LOAD_CHECK
+/* With a trust store the preload stage is the core's check, with or
+ * without a worker, and the open moves to a worker only from the file
+ * the check passed. Any core path but a built-in core's: a playlist
+ * Run sets no explicit core type, and only a refused open parks. */
+static bool runloop_core_check_begin(void)
+{
+   const char *path = path_get(RARCH_PATH_CORE);
+#if defined(ANDROID)
+   char real_path[PATH_MAX_LENGTH];
+#endif
+   if (     !path || !*path
+         || (     (runloop_state.flags & RUNLOOP_FLAG_HAS_SET_CORE)
+               &&  runloop_state.explicit_current_core_type
+                  != CORE_TYPE_PLAIN))
+      return false;
+   /* The path load_dynamic_core() opens, resolved the same way */
+#ifdef _WIN32
+   if (!core_load_verbatim_dot(path))
+#endif
+   {
+      path_resolve_realpath(path_get_ptr(RARCH_PATH_CORE),
+            path_get_realsize(RARCH_PATH_CORE),
+            load_dynamic_core_resolves_symlinks());
+   }
+   path = path_get(RARCH_PATH_CORE);
+#if defined(ANDROID)
+   /* The check reads the real path, as the open does */
+   if (!android_core_path_resolve(path, real_path, sizeof(real_path)))
+      return false;
+   path = real_path;
+#endif
+   return core_load_check_stage_begin(path);
+}
+
+static dylib_t runloop_core_check_take(const char *path)
+{
+#if defined(ANDROID)
+   char real_path[PATH_MAX_LENGTH];
+   if (android_core_path_resolve(path, real_path, sizeof(real_path)))
+      return core_load_check_stage_take(real_path);
+   core_load_check_stage_cancel();
+   return NULL;
+#else
+   return core_load_check_stage_take(path);
+#endif
+}
+#endif
 
 /* ---- the core's library, opened ahead of the load ----
  *
@@ -890,7 +993,7 @@ static void core_preload_task_handler(retro_task_t *task)
    core_preload_handle_t *h = task ? (core_preload_handle_t*)task->state : NULL;
    /* The open: the one thing off the main thread */
    if (h && h->path)
-      h->lib = dylib_load(h->path);
+      h->lib = runloop_core_dylib_open(h->path, true);
    if (task)
       task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
 }
@@ -968,6 +1071,11 @@ bool runloop_core_preload_begin(void)
    core_preload_handle_t *h    = NULL;
    const char            *path = path_get(RARCH_PATH_CORE);
 
+#ifdef HAVE_CORE_LOAD_CHECK
+   if (core_trust_runtime_active())
+      return runloop_core_check_begin();
+#endif
+
    /* Only a plain core named by the push, and only with a worker to
     * open it on: inline, the open would run on this thread at the next
     * check, which is the synchronous path. */
@@ -1011,11 +1119,18 @@ bool runloop_core_preload_begin(void)
 
 bool runloop_core_preload_ready(void)
 {
+#ifdef HAVE_CORE_LOAD_CHECK
+   if (core_trust_runtime_active())
+      return core_load_check_stage_ready();
+#endif
    return !core_preload_pending;
 }
 
 void runloop_core_preload_cancel(void)
 {
+#ifdef HAVE_CORE_LOAD_CHECK
+   core_load_check_stage_cancel();
+#endif
    core_preload_reset();
 }
 #endif
@@ -1043,15 +1158,28 @@ static dylib_t load_dynamic_core(const char *path, char *s,
    /* Need to use absolute path for this setting. It can be
     * saved to content history, and a relative path would
     * break in that scenario. */
-   path_resolve_realpath(s, len, resolve_symlinks);
-#if defined(HAVE_DYNAMIC) && defined(HAVE_THREADS)
-   {
-      dylib_t pre = core_preload_take(path);
-      if (pre)
-         return pre;
-   }
+#if defined(HAVE_CORE_LOAD_CHECK) && defined(_WIN32)
+   /* As given: _wfullpath drops the '.' the check refuses */
+   if (!core_trust_runtime_active() || !core_load_verbatim_dot(s))
 #endif
-   return dylib_load(path);
+      path_resolve_realpath(s, len, resolve_symlinks);
+   {
+      dylib_t lib = NULL;
+#if defined(HAVE_DYNAMIC) && defined(HAVE_THREADS)
+      lib = core_preload_take(path);
+#endif
+#ifdef HAVE_CORE_LOAD_CHECK
+      if (!lib && core_trust_runtime_active())
+         lib = runloop_core_check_take(path);
+#endif
+      if (!lib)
+         lib = runloop_core_dylib_load(path, false);
+#ifdef HAVE_CORE_LOAD_CHECK
+      if (lib)
+         core_load_check_loaded();
+#endif
+      return lib;
+   }
 }
 
 /* @live is set when @path opened the library already loaded as the
@@ -1062,7 +1190,7 @@ static dylib_t libretro_get_system_info_lib(const char *path,
       struct retro_system_info *sysinfo, bool *load_no_content,
       bool *live)
 {
-   dylib_t lib = dylib_load(path);
+   dylib_t lib = runloop_core_dylib_load(path, false);
    void (*proc)(struct retro_system_info*);
 
    *live = false;
@@ -1102,11 +1230,33 @@ static dylib_t libretro_get_system_info_lib(const char *path,
 #endif
 
 #if !(defined(HAVE_DYNAMIC) && defined(HAVE_THREADS))
-/* No worker to open the library on: the core stage loads it
- * (or links it statically), so the preload stage has nothing to do. */
-bool runloop_core_preload_begin(void)  { return false; }
-bool runloop_core_preload_ready(void)  { return true; }
-void runloop_core_preload_cancel(void) { }
+/* No worker to open the library on: the core stage loads it (or links
+ * it statically), so the preload stage has nothing to do but the
+ * core's check */
+bool runloop_core_preload_begin(void)
+{
+#ifdef HAVE_CORE_LOAD_CHECK
+   if (core_trust_runtime_active())
+      return runloop_core_check_begin();
+#endif
+   return false;
+}
+
+bool runloop_core_preload_ready(void)
+{
+#ifdef HAVE_CORE_LOAD_CHECK
+   if (core_trust_runtime_active())
+      return core_load_check_stage_ready();
+#endif
+   return true;
+}
+
+void runloop_core_preload_cancel(void)
+{
+#ifdef HAVE_CORE_LOAD_CHECK
+   core_load_check_stage_cancel();
+#endif
+}
 #endif
 
 static void runloop_update_runtime_log(
@@ -2039,11 +2189,49 @@ static int runloop_video_decode_get_gpu_frame(void *decoder,
    return 1;
 }
 
+static void runloop_video_decode_set_tag(void *decoder, uint64_t tag)
+{
+   rh264_video_set_tag((rh264_video*)decoder, tag);
+}
+
+static uint64_t runloop_video_decode_get_tag(void *decoder)
+{
+   return rh264_video_tag((rh264_video*)decoder);
+}
+
 static void runloop_video_decode_close(void *decoder)
 {
    rh264_video_close((rh264_video*)decoder);
 }
 #endif
+
+/* Whether the core's aspect hint affects the displayed viewport. */
+static bool runloop_uses_core_aspect_hint(const settings_t *settings)
+{
+   return settings->uints.video_aspect_ratio_idx == ASPECT_RATIO_CORE
+      || (     settings->uints.video_aspect_ratio_idx == ASPECT_RATIO_CONFIG
+            && settings->floats.video_aspect_ratio < 0.0f
+            && settings->bools.video_aspect_ratio_auto);
+}
+
+/* The caller handles base-size changes separately. */
+static bool runloop_aspect_hint_changes_viewport(const settings_t *settings,
+      const struct retro_game_geometry *geom,
+      const struct retro_game_geometry *next)
+{
+   bool old_provided = geom->aspect_ratio > 0.0f;
+   bool new_provided = next->aspect_ratio > 0.0f;
+   float provided;
+
+   if (!runloop_uses_core_aspect_hint(settings))
+      return false;
+   if (old_provided == new_provided)
+      return old_provided && geom->aspect_ratio != next->aspect_ratio;
+   if (!geom->base_width || !geom->base_height)
+      return true;
+   provided = old_provided ? geom->aspect_ratio : next->aspect_ratio;
+   return provided != (float)geom->base_width / geom->base_height;
+}
 
 bool runloop_environment_cb(unsigned cmd, void *data)
 {
@@ -2914,7 +3102,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
 
                   for (p = 0; p < input_driver_max_users; p++)
                   {
-                     unsigned mapped_port = settings->uints.input_remap_ports[p];
+                     unsigned mapped_port = input_remapping_user_port(p);
 
                      RARCH_DBG("%s %u:\n", msg_hash_to_str(MENU_ENUM_LABEL_VALUE_PORT), p + 1);
 
@@ -3379,6 +3567,11 @@ bool runloop_environment_cb(unsigned cmd, void *data)
             }
             if (iface->interface_version >= 3)
                iface->get_gpu_frame = runloop_video_decode_get_gpu_frame;
+            if (iface->interface_version >= 4)
+            {
+               iface->set_tag = runloop_video_decode_set_tag;
+               iface->get_tag = runloop_video_decode_get_tag;
+            }
             return true;
          }
 #else
@@ -3449,50 +3642,77 @@ bool runloop_environment_cb(unsigned cmd, void *data)
        * Used by RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO.
        **/
       {
-         const struct retro_system_av_info **info = (const struct retro_system_av_info**)&data;
+         const struct retro_system_av_info *info  = (const struct retro_system_av_info*)data;
          video_driver_state_t *video_st           = video_state_get_ptr();
          struct retro_system_av_info *av_info     = &video_st->av_info;
 
          if (data)
          {
-            int reinit_flags                      = DRIVERS_CMD_ALL;
+            int reinit_flags                      = DRIVERS_CMD_ALL
+                  & ~(DRIVER_CAMERA_MASK | DRIVER_MICROPHONE_MASK);
             settings_t *settings                  = config_get_ptr();
             recording_state_t *rec_st             = recording_state_get_ptr();
-            float refresh_rate                    = (*info)->timing.fps;
+            float refresh_rate                    = info->timing.fps;
             unsigned crt_switch_resolution        = settings->uints.crt_switch_resolution;
             bool video_fullscreen                 = settings->bools.video_fullscreen;
             bool video_frame_delay_auto           = settings->bools.video_frame_delay_auto;
             bool video_switch_refresh_rate        = false;
-            bool no_video_reinit                  = true;
-            bool fps_changed                      = false;
+            bool no_video_reinit;
+            bool fps_changed                      = info->timing.fps != av_info->timing.fps;
+            bool sample_rate_changed              = info->timing.sample_rate != av_info->timing.sample_rate;
+            bool timing_changed                   = fps_changed || sample_rate_changed;
+            bool base_size_changed                =
+                     info->geometry.base_width  != av_info->geometry.base_width
+                  || info->geometry.base_height != av_info->geometry.base_height;
+            bool max_size_changed                 =
+                     info->geometry.max_width  != av_info->geometry.max_width
+                  || info->geometry.max_height != av_info->geometry.max_height;
+            bool aspect_changed                   = info->geometry.aspect_ratio != av_info->geometry.aspect_ratio;
+            bool viewport_changed                 = base_size_changed
+                  || (aspect_changed && runloop_aspect_hint_changes_viewport(
+                           settings, &av_info->geometry, &info->geometry));
+            bool geometry_changed                 = base_size_changed || aspect_changed || max_size_changed;
+            bool max_size_fits                     = !max_size_changed;
+
+            if (     verbosity_get_log_level() == RETRO_LOG_DEBUG
+                  && verbosity_is_enabled())
+               RARCH_DBG("[Environ] SET_SYSTEM_AV_INFO: %ux%u, Aspect: %.4f, FPS: %.4f, Sample rate: %.0f Hz.\n",
+                     info->geometry.base_width, info->geometry.base_height,
+                     info->geometry.aspect_ratio, info->timing.fps,
+                     info->timing.sample_rate);
+
+            if (!geometry_changed && !timing_changed)
+               return true;
+
+            if (     max_size_changed
+                  && info->geometry.max_width && info->geometry.max_height
+                  && info->geometry.max_width  <= video_st->max_geometry_capacity
+                  && info->geometry.max_height <= video_st->max_geometry_capacity
+                  && !video_driver_is_hw_context()
+#ifdef HAVE_VIDEO_FILTER
+                  && !video_st->state_filter
+#endif
+                  && video_st->pix_fmt == video_st->max_geometry_format)
+               max_size_fits = true;
 
             /* Refresh rate switch for regular displays */
-            if (video_display_server_has_resolution_list())
+            if (fps_changed && video_display_server_has_resolution_list())
                video_switch_refresh_rate_maybe(&refresh_rate, &video_switch_refresh_rate);
 
-            /* Recalibrate frame delay target when video reinits
-             * and pause frame delay when video does not reinit */
-            if (video_frame_delay_auto)
+            /* CRT switchres depends on the base size and field rate. */
+            no_video_reinit                       = (
+                     !video_switch_refresh_rate
+                  && max_size_fits
+                  && (!crt_switch_resolution || (!fps_changed && !base_size_changed)));
+
+            /* Recalibrate only when the video workload changes. */
+            if (video_frame_delay_auto && (!no_video_reinit || viewport_changed || fps_changed))
             {
-               if (no_video_reinit && !video_switch_refresh_rate)
+               if (no_video_reinit)
                   video_st->frame_delay_pause  = true;
                else
                   video_st->frame_delay_target = 0;
             }
-
-            /* CRT switchres derives its mode from the base resolution
-             * and field rate; while those hold, the shortcut below
-             * keeps the switched mode and only the remaining drivers
-             * (audio among them) pick up the new av_info. */
-            no_video_reinit                       = (
-                     (video_switch_refresh_rate == false)
-                  && data
-                  && ((*info)->geometry.max_width  == av_info->geometry.max_width)
-                  && ((*info)->geometry.max_height == av_info->geometry.max_height)
-                  && (   (crt_switch_resolution == 0)
-                      || (   ((*info)->timing.fps           == av_info->timing.fps)
-                          && ((*info)->geometry.base_width  == av_info->geometry.base_width)
-                          && ((*info)->geometry.base_height == av_info->geometry.base_height))));
 
             /* First set new refresh rate and display rate, then after REINIT do
              * another display rate change to make sure the change stays */
@@ -3500,46 +3720,47 @@ bool runloop_environment_cb(unsigned cmd, void *data)
                   && video_display_server_set_refresh_rate(refresh_rate))
                video_monitor_set_refresh_rate(refresh_rate);
 
-            /* When not doing video reinit, we also must not do input and menu
-             * reinit, otherwise the input driver crashes and the menu gets
-             * corrupted. */
-            if (no_video_reinit)
-               reinit_flags =
-                  DRIVERS_CMD_ALL &
-                  ~(DRIVER_VIDEO_MASK | DRIVER_INPUT_MASK | DRIVER_MENU_MASK);
-            /* no need to reinit camera or microphone here */
-            reinit_flags &= ~(DRIVER_CAMERA_MASK | DRIVER_MICROPHONE_MASK);
+            if (base_size_changed)
+            {
+               av_info->geometry.base_width  = info->geometry.base_width;
+               av_info->geometry.base_height = info->geometry.base_height;
+            }
+            if (max_size_changed)
+            {
+               av_info->geometry.max_width  = info->geometry.max_width;
+               av_info->geometry.max_height = info->geometry.max_height;
+            }
+            if (aspect_changed)
+               av_info->geometry.aspect_ratio = info->geometry.aspect_ratio;
+            if (fps_changed)
+               av_info->timing.fps = info->timing.fps;
+            if (sample_rate_changed)
+               av_info->timing.sample_rate = info->timing.sample_rate;
 
-            RARCH_LOG("[Environ] SET_SYSTEM_AV_INFO: %ux%u, Aspect: %.4f, FPS: %.4f, Sample rate: %.0f Hz.\n",
-                  (*info)->geometry.base_width, (*info)->geometry.base_height,
-                  (*info)->geometry.aspect_ratio,
-                  (*info)->timing.fps,
-                  (*info)->timing.sample_rate);
-
-            fps_changed = (*info)->timing.fps != av_info->timing.fps;
-            memcpy(av_info, *info, sizeof(*av_info));
-
-            /* With video kept, only audio has anything to follow - the
-             * rate, and the timing the frame rate sets - and the
-             * running driver takes both in place; nothing starts over. */
-            if (!no_video_reinit || !driver_set_audio_input_rate())
+            /* The running audio driver takes timing changes in place. */
+            if (!no_video_reinit)
                command_event(CMD_EVENT_REINIT, &reinit_flags);
+            else if (     timing_changed
+                     && !driver_set_audio_input_rate(fps_changed)
+                     && video_st->data
+                     && !runloop_is_content_switching())
+               command_event(CMD_EVENT_AUDIO_REINIT, NULL);
 
             /* The frame limit is the frame rate times the fast-forward
              * ratio; nothing else recomputes it while the core runs. */
             if (fps_changed)
                command_event(CMD_EVENT_SET_FRAME_LIMIT, NULL);
 
-            if (no_video_reinit)
+            if (no_video_reinit && viewport_changed)
                command_event(CMD_EVENT_VIDEO_SET_ASPECT_RATIO, NULL);
 
             if (video_switch_refresh_rate)
                video_display_server_set_refresh_rate(refresh_rate);
 
-            /* Cannot continue recording with different parameters.
-             * Take the easiest route out and just restart
-             * the recording. */
-            if (rec_st->data)
+            /* Restart when recording parameters or the video driver change. */
+            if (     rec_st->data
+                  && (!no_video_reinit || viewport_changed
+                     || max_size_changed || timing_changed))
             {
                const char *_msg = msg_hash_to_str(MSG_RESTARTING_RECORDING_DUE_TO_DRIVER_REINIT);
                runloop_msg_queue_push(_msg, strlen(_msg), 2, 180, false, NULL,
@@ -3558,7 +3779,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
 
             /* Hide mouse cursor in fullscreen after
              * a RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO call. */
-            if (video_fullscreen)
+            if (video_fullscreen && !no_video_reinit)
             {
                if (     video_st->poke
                      && video_st->poke->show_mouse)
@@ -3738,42 +3959,54 @@ bool runloop_environment_cb(unsigned cmd, void *data)
       case RETRO_ENVIRONMENT_SET_GEOMETRY:
       {
          video_driver_state_t *video_st           = video_state_get_ptr();
-         struct retro_system_av_info *av_info     = &video_st->av_info;
-         struct retro_game_geometry  *geom        = (struct retro_game_geometry*)&av_info->geometry;
+         struct retro_game_geometry  *geom        = &video_st->av_info.geometry;
          const struct retro_game_geometry *in_geom= (const struct retro_game_geometry*)data;
+         bool base_size_changed;
+         bool aspect_changed;
+         bool viewport_changed;
 
-         if (!geom)
+         if (!in_geom)
             return false;
+
+         base_size_changed = geom->base_width != in_geom->base_width
+                          || geom->base_height != in_geom->base_height;
+         aspect_changed = geom->aspect_ratio != in_geom->aspect_ratio;
+         viewport_changed = base_size_changed
+               || (aspect_changed && runloop_aspect_hint_changes_viewport(
+                        settings, geom, in_geom));
+
+         if (     verbosity_get_log_level() == RETRO_LOG_DEBUG
+               && verbosity_is_enabled())
+         {
+            if (base_size_changed || aspect_changed)
+               RARCH_DBG("[Environ] SET_GEOMETRY: %ux%u, Aspect: %.3f.\n",
+                     in_geom->base_width, in_geom->base_height, in_geom->aspect_ratio);
+            else
+               RARCH_DBG("[Environ] SET_GEOMETRY.\n");
+         }
 
          /* Can potentially be called every frame,
           * don't do anything unless required. */
-         if (     (geom->base_width   != in_geom->base_width)
-               || (geom->base_height  != in_geom->base_height)
-               || (geom->aspect_ratio != in_geom->aspect_ratio))
+         if (base_size_changed || aspect_changed)
          {
-            bool video_frame_delay_auto = settings->bools.video_frame_delay_auto;
+            if (base_size_changed)
+            {
+               geom->base_width  = in_geom->base_width;
+               geom->base_height = in_geom->base_height;
+            }
+            if (aspect_changed)
+               geom->aspect_ratio = in_geom->aspect_ratio;
 
-            geom->base_width            = in_geom->base_width;
-            geom->base_height           = in_geom->base_height;
-            geom->aspect_ratio          = in_geom->aspect_ratio;
+            if (viewport_changed)
+            {
+               command_event(CMD_EVENT_VIDEO_SET_ASPECT_RATIO, NULL);
 
-            RARCH_LOG("[Environ] SET_GEOMETRY: %ux%u, Aspect: %.3f.\n",
-                  geom->base_width, geom->base_height, geom->aspect_ratio);
-
-            /* Forces recomputation of aspect ratios if
-             * using core-dependent aspect ratios. */
-            command_event(CMD_EVENT_VIDEO_SET_ASPECT_RATIO, NULL);
-
-            /* Ignore frame delay target temporarily */
-            if (video_frame_delay_auto)
-               video_st->frame_delay_pause = true;
+               if (settings->bools.video_frame_delay_auto)
+                  video_st->frame_delay_pause = true;
+            }
 
             /* TODO: Figure out what to do, if anything, with
                recording. */
-         }
-         else
-         {
-            RARCH_LOG("[Environ] SET_GEOMETRY.\n");
          }
          break;
       }
@@ -3810,6 +4043,19 @@ bool runloop_environment_cb(unsigned cmd, void *data)
          }
 
          return false;
+      }
+
+      case RETRO_ENVIRONMENT_GET_HW_SHARED_CONTEXT_INTERFACE:
+      {
+         const struct retro_hw_shared_context_interface **iface =
+            (const struct retro_hw_shared_context_interface **)data;
+         const struct retro_hw_shared_context_interface *got =
+            video_driver_hw_shared_context_interface();
+         if (!got)
+            return false;
+         if (iface)
+            *iface = got;
+         return true;
       }
 
       case RETRO_ENVIRONMENT_GET_HW_RENDER_UPSCALER_INTERFACE:
@@ -3870,7 +4116,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
 
       case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:
       {
-         const uint32_t supported_vfs_version = 5;
+         const uint32_t supported_vfs_version = 7;
          static struct retro_vfs_interface vfs_iface =
          {
             /* VFS API v1 */
@@ -3904,7 +4150,19 @@ bool runloop_environment_cb(unsigned cmd, void *data)
             retro_vfs_copy_begin_impl,
             retro_vfs_copy_step_impl,
             retro_vfs_copy_close_impl,
-            retro_vfs_dirent_stat_impl
+            retro_vfs_dirent_stat_impl,
+             /* VFS API v6 */
+            retro_vfs_file_read_at_impl,
+            retro_vfs_file_write_at_impl,
+             /* VFS API v7 */
+            retro_vfs_file_view_impl,
+            retro_vfs_file_map_impl,
+            retro_vfs_file_identity_impl,
+            retro_vfs_stat_identity_impl,
+            retro_vfs_file_volume_impl,
+            retro_vfs_stat_volume_impl,
+            retro_vfs_file_verity_measure_impl,
+            retro_vfs_file_verity_enable_impl
          };
 
          struct retro_vfs_interface_info *vfs_iface_info = (struct retro_vfs_interface_info *) data;
@@ -4706,6 +4964,7 @@ static core_probe_t *core_probes       = NULL;
 static size_t        core_probes_count = 0;
 static size_t        core_probes_cap   = 0;
 static bool          core_probes_read  = false;
+static bool          core_probe_live   = false;
 
 #define CORE_PROBE_FILE_HEADER "core_probe 1\n"
 
@@ -4975,6 +5234,11 @@ bool runloop_core_probe_need_fullpath(const char *core_path,
    }
    return true;
 }
+
+bool runloop_core_probe_live(void)
+{
+   return core_probe_live;
+}
 #endif
 
 bool libretro_get_system_info(
@@ -4992,6 +5256,9 @@ bool libretro_get_system_info(
 #endif
    runloop_state_t *runloop_st  = &runloop_state;
 
+#ifdef HAVE_DYNAMIC
+   core_probe_live              = false;
+#endif
    if (string_ends_with_size(path,
             "builtin", strlen(path), STRLEN_CONST("builtin")))
       return false;
@@ -5023,12 +5290,21 @@ bool libretro_get_system_info(
       lib = libretro_get_system_info_lib(path, &dummy_info, &no_game,
             &live);
       core_probe_capture = NULL;
+      core_probe_live    = live;
       if (!lib)
       {
+         const char *err = NULL;
+#ifdef HAVE_CORE_LOAD_CHECK
+         /* Refused by the load check: already logged */
+         if (core_load_check_refused(path))
+            return false;
+#endif
+         err = dylib_error();
          RARCH_ERR("[Core] %s: \"%s\"\n",
                msg_hash_to_str(MSG_FAILED_TO_OPEN_LIBRETRO_CORE),
                path);
-         RARCH_ERR("[Core] Error(s): %s\n", dylib_error());
+         if (err)
+            RARCH_ERR("[Core] Error(s): %s\n", err);
          return false;
       }
       if (load_no_content)
@@ -5160,7 +5436,16 @@ bool runloop_init_libretro_symbols(
                            )))
                {
                   const char *_msg = msg_hash_to_str(MSG_FAILED_TO_OPEN_LIBRETRO_CORE);
-                  RARCH_ERR("[Core] %s: \"%s\"\nError(s): %s\n", _msg, path, dylib_error());
+                  const char *err  = dylib_error();
+#ifdef HAVE_CORE_LOAD_CHECK
+                  /* Held back by the load check, which says why */
+                  if (core_load_check_refused(path))
+                     return false;
+#endif
+                  if (err)
+                     RARCH_ERR("[Core] %s: \"%s\"\nError(s): %s\n", _msg, path, err);
+                  else
+                     RARCH_ERR("[Core] %s: \"%s\"\n", _msg, path);
                   runloop_msg_queue_push(_msg, strlen(_msg), 1, 180, true, NULL,
                         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
                   return false;
@@ -5176,7 +5461,7 @@ bool runloop_init_libretro_symbols(
                 * unless the caller has opened it already */
                if (!(lib_handle_local = *lib_handle_p))
                {
-                  if (!(lib_handle_local = dylib_load(lib_path)))
+                  if (!(lib_handle_local = runloop_core_dylib_load(lib_path, false)))
                      return false;
                   *lib_handle_p = lib_handle_local;
                }
@@ -5377,6 +5662,9 @@ static void uninit_libretro_symbols(
 #ifdef HAVE_DYNAMIC
    if (lib_handle_local)
       dylib_close(lib_handle_local);
+#ifdef HAVE_CORE_LOAD_CHECK
+   core_load_check_unloaded();
+#endif
 #endif
 
 #ifdef HAVE_OPENXR
@@ -5426,11 +5714,12 @@ static retro_time_t runloop_core_runtime_tick(
    uint32_t flags                 = runloop_st->flags;
    double fps                     = video_st->av_info.timing.fps;
    retro_time_t frame_time        = 0;
+   retro_time_t since             = current_time
+      - runloop_st->core_runtime_last;
 
    /* A core that reports no frame rate - the dummy core, or one that
     * has not set its timing yet - has no frame time to count, and
-    * neither has a rate so small that one frame outlasts a day.
-    * Any other rate is counted exactly as it always was. */
+    * neither has a rate so small that one frame outlasts a day. */
    if (fps > 0.0)
    {
       double frame_usec = (1.0 / fps) * 1000000.0;
@@ -5440,22 +5729,11 @@ static retro_time_t runloop_core_runtime_tick(
 
    /* Account for slow motion */
    if (flags & RUNLOOP_FLAG_SLOWMOTION)
-      return (retro_time_t)(frame_time * slowmotion_ratio);
+      frame_time = (retro_time_t)(frame_time * slowmotion_ratio);
 
-   /* Account for fast forward */
-   if (flags & RUNLOOP_FLAG_FASTMOTION)
-   {
-      retro_time_t potential_frame_time = current_time
-         - runloop_st->core_runtime_last;
-      runloop_st->core_runtime_last     = current_time;
-
-      if (potential_frame_time < frame_time)
-         return potential_frame_time;
-
-      return frame_time;
-   }
-
-   return frame_time;
+   runloop_st->core_runtime_last = current_time;
+   return runloop_core_runtime_step(frame_time, since,
+         &runloop_st->core_runtime_credit);
 }
 
 static bool core_unload_game(void)
@@ -6085,6 +6363,7 @@ static void runloop_runtime_log_init(runloop_state_t *runloop_st)
    const char *core_path               = path_get(RARCH_PATH_CORE);
 
    runloop_st->core_runtime_last       = cpu_features_get_time_usec();
+   runloop_st->core_runtime_credit     = 0;
    runloop_st->core_runtime_usec       = 0;
 
    /* Have to cache content and core path here, otherwise
@@ -6157,9 +6436,11 @@ static runloop_pace_facts_t runloop_driver_pacing_gather(settings_t *settings,
 {
    unsigned want                  = settings->uints.video_driver_pacing;
    unsigned reason                = VIDEO_DRIVER_PACING_REASON_NONE;
+   bool asked;
    const video_poke_interface_t *poke = video_st->poke;
    if (want >= VIDEO_DRIVER_PACING_LAST)
       want = VIDEO_DRIVER_PACING_OFF;
+   asked = want != VIDEO_DRIVER_PACING_OFF;
    if (!want)
       reason = VIDEO_DRIVER_PACING_REASON_OFF;
    else if (!poke || !poke->driver_pacing_set || !video_st->data)
@@ -6190,6 +6471,13 @@ static runloop_pace_facts_t runloop_driver_pacing_gather(settings_t *settings,
       f |= PACE_FACT_DRIVER_PACING;
    else
    {
+      /* nothing could take it: runloop_pace_driver_fallback() */
+      if (asked && (   reason == VIDEO_DRIVER_PACING_REASON_DRIVER
+                    || reason == VIDEO_DRIVER_PACING_REASON_DEVICE
+                    || reason == VIDEO_DRIVER_PACING_REASON_SWAPCHAIN
+                    || reason == VIDEO_DRIVER_PACING_REASON_FAILED
+                    || reason == VIDEO_DRIVER_PACING_REASON_CORE))
+         f |= PACE_FACT_DRIVER_PACING_MISSING;
       runloop_st->driver_pacing_frame_id     = 0;
       video_st->driver_pacing_id             = 0;
       video_st->driver_pacing_interval_us    = 0;
@@ -6230,6 +6518,9 @@ static runloop_pace_facts_t runloop_pace_gather(settings_t *settings,
    if (video_context_driver_presentable())                 f |= PACE_FACT_PRESENTABLE;
    if (runloop_st->frame_limit_minimum_time)               f |= PACE_FACT_FRAME_LIMIT;
    if (core_ran)                                           f |= PACE_FACT_CORE_RAN;
+   if (     core_ran
+         && video_st->dupe_skip_hold
+         && settings->bools.video_skip_dupe_frames)        f |= PACE_FACT_DUPE_SKIP;
    return runloop_driver_pacing_gather(settings, runloop_st, video_st, f);
 }
 
@@ -6614,6 +6905,11 @@ bool runloop_event_init_core(
    if (!runloop_init_libretro_symbols(runloop_st,
             type, &runloop_st->current_core, NULL, NULL))
       return false;
+#ifdef HAVE_CORE_LOAD_CHECK
+   /* A plain core's load tells the check itself */
+   if (type != CORE_TYPE_PLAIN && type != CORE_TYPE_DUMMY)
+      core_load_check_builtin_loaded();
+#endif
 #ifdef HAVE_RUNAHEAD
    /* Remember last core type created, so creating a
     * secondary core will know what core type to use. */
@@ -8298,8 +8594,8 @@ static enum runloop_state_enum runloop_check_state(
 #endif
 
 #if defined(HAVE_MENU) || defined(HAVE_GFX_WIDGETS)
-   /* Per-eye UI lays out at one eye's size. */
-   output_dims = video_driver_get_ui_dims();
+   /* The menu lays out at its window's size: one eye's for per-eye UI */
+   output_dims = video_driver_get_ui_layer_dims(VIDEO_WINDOW_UI_MENU);
 
    gfx_animation_update(
          current_time,
@@ -8332,7 +8628,8 @@ static enum runloop_state_enum runloop_check_state(
          gfx_widgets_iterate(
                p_disp,
                settings,
-               output_dims,
+               video_driver_get_ui_layer_dims(
+                  VIDEO_WINDOW_UI_NOTIFICATIONS),
                video_is_fullscreen,
                settings->paths.directory_assets,
                settings->paths.path_font,
@@ -8699,6 +8996,12 @@ static enum runloop_state_enum runloop_check_state(
          return RUNLOOP_STATE_POLLED_AND_CONTINUE;
       }
 
+#ifdef HAVE_CORE_SIGNATURES
+      if (     !runloop_st->content_switching
+            && menu_core_warning_iterate(menu_st))
+         return RUNLOOP_STATE_POLLED_AND_CONTINUE;
+#endif
+
       if (focused || !(runloop_st->flags & RUNLOOP_FLAG_IDLE))
       {
 #ifdef HAVE_NETWORKING
@@ -8742,20 +9045,16 @@ static enum runloop_state_enum runloop_check_state(
 
          if (menu)
          {
-            if (BIT64_GET(menu->state, MENU_STATE_RENDER_FRAMEBUFFER)
-                  != BIT64_GET(menu->state, MENU_STATE_RENDER_MESSAGEBOX))
-               BIT64_SET(menu->state, MENU_STATE_RENDER_FRAMEBUFFER);
-
             if (BIT64_GET(menu->state, MENU_STATE_RENDER_FRAMEBUFFER))
                p_disp->flags |= GFX_DISP_FLAG_FB_DIRTY;
 
             if (BIT64_GET(menu->state, MENU_STATE_RENDER_MESSAGEBOX)
-                  && *menu->menu_state_msg)
+                  && *MENU_STATE_TEXT(menu))
             {
                if (menu->driver_ctx->render_messagebox)
                   menu->driver_ctx->render_messagebox(
                         menu->userdata,
-                        menu->menu_state_msg);
+                        MENU_STATE_TEXT(menu));
 
             }
 
@@ -9749,6 +10048,11 @@ int runloop_iterate(void)
 
    recording_gpu_poll();
    runloop_msg_queue_drain_deferred();
+#ifdef HAVE_CORE_LOAD_CHECK
+   if (     (runloop_st->frame_work & RUNLOOP_WORK_CORE_PARK)
+         && !runloop_st->quit_pending)
+      core_load_check_iterate();
+#endif
 
    /* A quit waiting for its state to be written: the core is not run
     * and nothing is read but the input the window needs drained; the
@@ -10168,8 +10472,9 @@ int runloop_iterate(void)
     * nothing was set. */
    input_driver_flush_rumble();
    led_driver_flush();
-   /* a first press seen by this frame's poll: the user gets its core
-    * port now, with the core off the stack */
+   /* a first press, or a controller beginning or ending to share a
+    * player, seen by this frame's poll: the core is told now, with the
+    * core off the stack */
    if (input_st->first_press_pending)
       input_first_press_apply();
 #ifdef HAVE_PRESENCE
@@ -10318,6 +10623,15 @@ end:
             (video_st->video_refresh_rate_original)
                ? video_st->video_refresh_rate_original
                : settings->floats.video_refresh_rate);
+   }
+   else if (   runloop_pace_driver_fallback(pace_facts, runloop_st->pace)
+            || runloop_pace_dupe_skip_engages(pace_facts, runloop_st->pace))
+   {
+      runloop_st->pace         |= RUNLOOP_PACE_TIMER;
+      pace_limit_min            = runloop_content_frame_time_us(
+            video_st->core_hz);
+      pace_limit_ns             = runloop_content_frame_time_ns(
+            video_st->core_hz);
    }
 
    /* The low-latency backend releases the next frame: the hold is the

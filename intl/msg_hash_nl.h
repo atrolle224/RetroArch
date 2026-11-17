@@ -2146,6 +2146,7 @@ static const struct
    char s_9eb59c3e[4];
    char s_34b2592a[4];
    char s_c7a27b20[12];
+   char s_d6611158[5];
    char s_317b17ed[6];
    char s_94c8d15f[6];
    char s_de16b5d2[8];
@@ -2223,10 +2224,6 @@ static const struct
    char s_482ee1f1[13];
    char s_f90edcc2[49];
    char s_ad14307a[11];
-#if defined(RARCH_MOBILE)
-   char s_774121c7[47];
-   char s_774121c8[47];
-#endif
    char s_b0fb58d3[26];
    char s_b0fb58d4[26];
    char s_92a02470[36];
@@ -2235,6 +2232,7 @@ static const struct
    char s_8f379310[39];
    char s_6a9b757c[28];
    char s_6c52dfb1[33];
+   char s_334daaaa[8];
 #if defined (WIIU)
 #ifdef WIIU
    char s_afb881f7[61];
@@ -2379,7 +2377,6 @@ static const struct
    char s_aa08c6d6[78];
 #endif
 #endif
-   char s_27aef25c[45];
 #ifdef _3DS
    char s_2873cef1[76];
    char s_b4816da6[64];
@@ -3432,10 +3429,8 @@ static const struct
    char s_7e96b5ce[44];
    char s_c2314d30[192];
 #if defined(RARCH_MOBILE)
-   char s_82c9e375[175];
-   char s_82c9e376[159];
+   char s_82c9e376[138];
 #endif
-   char s_73658ec1[153];
    char s_73658ec2[138];
    char s_8010a29e[115];
    char s_81120e85[116];
@@ -6322,6 +6317,7 @@ static const struct
    "UIT",
    "UIT",
    "Automatisch",
+   "Geen",
    "180\302\272",
    "270\302\272",
    "Normaal",
@@ -6399,10 +6395,6 @@ static const struct
    "Gebalanceerd",
    "Gebruik Metal-Argumentbuffers (herstart vereist)",
    "Ontflikker",
-#if defined(RARCH_MOBILE)
-   "Viewport Anker Voorkeur X (portretori\303\253ntatie)",
-   "Viewport Anker Voorkeur Y (portretori\303\253ntatie)",
-#endif
    "Viewport Anker Voorkeur X",
    "Viewport Anker Voorkeur Y",
    "Aangepaste Beeldverhouding (Hoogte)",
@@ -6411,6 +6403,7 @@ static const struct
    "Aangepaste Beeldverhouding (Y-positie)",
    "VI Scherm Breedte Instellen",
    "Verticale synchronisatie (Vsync)",
+   "Systeem",
 #if defined (WIIU)
 #ifdef WIIU
    "Optimaliseren voor Wii U GamePad (Opnieuw opstarten vereist)",
@@ -6577,7 +6570,6 @@ static const struct
    "Schakel Bluetooth ERTM uit om de koppeling van sommige apparaten te repareren",
 #endif
 #endif
-   "Scan naar bluetooth apparaten en verbind ze.",
 #ifdef _3DS
    "De map met assets voor het onderste scherm moet \"bottom_menu.png\" bevatten.",
    "Pas de blauwe kleur van het lettertype onderaan het scherm aan.",
@@ -8024,13 +8016,9 @@ static const struct
    "Probeer de prestaties te verbeteren door de Metal-argumentbuffers te gebruiken. Voor sommige cor"
    "es kan dit nodig zijn. Dit kan sommige shaders breken, met name op oude hardware of OS versies.",
 #if defined(RARCH_MOBILE)
-   "Horizontale positie van inhoud wanneer de viewport breder is dan de breedte van de inhoud. 0.0 i"
-   "s helemaal links, 0.5 is center, 1.0 is helemaal rechts.  (portretori\303\253ntatie)",
    "Verticale positie van content wanneer de viewport groter is dan de hoogte van de inhoud. 0.0 is "
-   "vanboven, 0.5 is center, 1.0 is vanonder. (portretori\303\253ntatie)",
+   "vanboven, 0.5 is center, 1.0 is vanonder.",
 #endif
-   "Horizontale positie van inhoud wanneer de viewport breder is dan de breedte van de inhoud. 0.0 i"
-   "s helemaal links, 0.5 is center, 1.0 is helemaal rechts.",
    "Verticale positie van content wanneer de viewport groter is dan de hoogte van de inhoud. 0.0 is "
    "vanboven, 0.5 is center, 1.0 is vanonder.",
    "Aangepaste weergave-hoogte die wordt gebruikt als de Beeldverhouding is ingesteld op 'Aangepaste"
@@ -8648,7 +8636,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_nl_blob_check[
-      (sizeof(msg_hash_nl_blob) == (172415u
+      (sizeof(msg_hash_nl_blob) == (172230u
 #ifdef ANDROID
        + 375u
 #endif
@@ -8868,10 +8856,6 @@ typedef char msg_hash_nl_blob_check[
 #ifdef HAVE_ODROIDGO2
        + 12u
 #endif
-#if defined(RARCH_MOBILE)
-       + 47u
-       + 47u
-#endif
 #if defined (WIIU)
 #ifdef WIIU
        + 61u
@@ -9062,8 +9046,7 @@ typedef char msg_hash_nl_blob_check[
        + 53u
 #endif
 #if defined(RARCH_MOBILE)
-       + 175u
-       + 159u
+       + 138u
 #endif
 #if defined (WIIU)
 #ifdef WIIU
@@ -11227,6 +11210,7 @@ static const msg_hash_id_t msg_hash_nl_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_NONE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED_ROTATED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_NORMAL,
@@ -11304,10 +11288,6 @@ static const msg_hash_id_t msg_hash_nl_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_QUALITY_BALANCED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_USE_METAL_ARG_BUFFERS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VFILTER,
-#if defined(RARCH_MOBILE)
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_PORTRAIT_X,
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_PORTRAIT_Y,
-#endif
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_X,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_HEIGHT,
@@ -11316,6 +11296,7 @@ static const msg_hash_id_t msg_hash_nl_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VI_WIDTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VSYNC,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM,
 #if defined (WIIU)
 #ifdef WIIU
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WIIU_PREFER_DRC,
@@ -11460,7 +11441,6 @@ static const msg_hash_id_t msg_hash_nl_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_ERTM_DISABLE,
 #endif
 #endif
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_SETTINGS,
 #ifdef _3DS
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_ASSETS_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_FONT_COLOR_BLUE,
@@ -12513,10 +12493,8 @@ static const msg_hash_id_t msg_hash_nl_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_SYNCHRONIZATION_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_USE_METAL_ARG_BUFFERS,
 #if defined(RARCH_MOBILE)
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_PORTRAIT_X,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_PORTRAIT_Y,
 #endif
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_X,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_Y,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_CUSTOM_HEIGHT,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_CUSTOM_WIDTH,

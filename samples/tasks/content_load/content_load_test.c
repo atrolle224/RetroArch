@@ -1540,12 +1540,28 @@ static void lane_queue_survives(void)
  * the close unloads the library), and the wait is spent in the frame
  * loop - frames presented, retro_run never entered - rather than
  * blocking inside one frame. */
+/* Frames a close or quit waits with the save held inside the core */
+#define SAVE_HELD_FRAMES 3
+/* A close or quit that has not ended in this long never will */
+#define SAVE_WAIT_MAX_USEC 60000000
+
+static void core_hold_serialize(unsigned on)
+{
+   dylib_t lib = runloop_state_get_ptr()->lib_handle;
+   void (*fn)(unsigned) = lib
+      ? (void (*)(unsigned))dylib_proc(lib, "harness_core_hold_serialize")
+      : NULL;
+   if (fn)
+      fn(on);
+}
+
 static void lane_close_waits_for_save(void)
 {
    struct menu_state *menu_st = menu_state_get_ptr();
    unsigned had = failures;
    unsigned i, runs_at_wait = 0, presented_waiting = 0, waited = 0;
-   bool ran_while_closing = false;
+   bool ran_while_closing = false, held = false;
+   retro_time_t deadline;
    settings_t *settings = config_get_ptr();
 
    /* The core runs (menu closed) so a save can be taken. */
@@ -1553,6 +1569,23 @@ static void lane_close_waits_for_save(void)
       command_event(CMD_EVENT_MENU_TOGGLE, NULL);
    pump(2);
    CHECK(core_is_up() && !menu_is_up(), "not running the core");
+
+   /* A background save on the threaded queue serializes on a worker,
+    * where the harness core holds it: the save is in flight when the
+    * close comes however fast the machine writes it. */
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, true);
+   task_queue_set_threaded();
+   task_queue_check();
+   if (task_queue_is_threaded())
+   {
+      set_save_state_in_background(true);
+      core_hold_serialize(1);
+      held = true;
+   }
+   else
+      fprintf(stderr, "[note] close-waits-for-save lane: no threaded "
+            "queue, the save is not held\n");
 
    configuration_set_int(settings, settings->ints.state_slot, 0);
    CHECK(command_event(CMD_EVENT_SAVE_STATE, NULL), "save state not started");
@@ -1566,9 +1599,11 @@ static void lane_close_waits_for_save(void)
 
    /* The save is written under the per-frame I/O window, so the frames
     * it takes follow the machine's speed: a dozen on a release build,
-    * some five hundred under TSan.  The bound only stops a close that
-    * never ends. */
-   for (i = 0; i < 20000 && runloop_is_content_switching(); i++)
+    * some five hundred under TSan.  The bound is time, as the frames
+    * are not paced; it only stops a close that never ends. */
+   deadline = cpu_features_get_time_usec() + SAVE_WAIT_MAX_USEC;
+   for (i = 0;    cpu_features_get_time_usec() < deadline
+               && runloop_is_content_switching(); i++)
    {
       unsigned before = presented;
       pump(1);
@@ -1584,8 +1619,23 @@ static void lane_close_waits_for_save(void)
          presented_waiting += presented - before;
          CHECK(!content_save_state_in_progress(NULL) || hook_installed(),
                "drivers rebuilt while the close was still waiting");
+         if (held && waited == SAVE_HELD_FRAMES)
+         {
+            CHECK(core_export("harness_core_serialize_held"),
+                  "the save was not inside the core while the close "
+                  "waited");
+            core_hold_serialize(0);
+            held = false;
+         }
       }
    }
+   /* Never leave a worker inside the core */
+   core_hold_serialize(0);
+   set_save_state_in_background(false);
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, false);
+   task_queue_unset_threaded();
+   task_queue_check();
    CHECK(!runloop_is_content_switching(), "the close did not finish");
    CHECK(waited >= 1, "the close never waited for the save (%u frames)", waited);
    CHECK(presented_waiting >= 1,
@@ -1635,7 +1685,8 @@ static void lane_quit_waits_for_save(void)
    settings_t *settings        = config_get_ptr();
    unsigned had = failures;
    unsigned i, runs_at_quit, presented_waiting = 0, waited = 0;
-   bool shutdown_early = false;
+   bool shutdown_early = false, held = false, armed = false, seen_held = false;
+   retro_time_t deadline;
    int ret = 1;
 
    if (menu_is_up())
@@ -1651,6 +1702,24 @@ static void lane_quit_waits_for_save(void)
             sizeof(state_dir));
       path_mkdir(state_dir);
    }
+   /* As in the close lane: a background save on the threaded queue,
+    * held inside the core, so the quit finds it in flight however fast
+    * the machine writes it. */
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, true);
+   task_queue_set_threaded();
+   task_queue_check();
+   if (task_queue_is_threaded())
+   {
+      set_save_state_in_background(true);
+      core_hold_serialize(1);
+      held  = true;
+      armed = true;
+   }
+   else
+      fprintf(stderr, "[note] quit-waits-for-save lane: no threaded "
+            "queue, the save is not held\n");
+
    /* The slot's file exists from the lanes before, so the save first
     * loads it into the undo buffer and is only pushed once that load
     * is through: the quit has to wait for the pair. */
@@ -1667,9 +1736,13 @@ static void lane_quit_waits_for_save(void)
    CHECK(!(runloop_st->flags & RUNLOOP_FLAG_SHUTDOWN_INITIATED),
          "shutdown began before the save was written");
 
-   /* As the main loop drives it, the queue checked after each frame;
-    * the bound only stops a quit that never ends. */
-   for (i = 0; i < 20000; i++)
+   /* As the main loop drives it, the queue checked after each frame.
+    * The bound is time, not frames: this loop's frames are not paced,
+    * and a threaded queue's tasks take what time they take - a
+    * hundred thousand frames go by in the 100 ms the save needs. It
+    * only stops a quit that never ends. */
+   deadline = cpu_features_get_time_usec() + SAVE_WAIT_MAX_USEC;
+   for (i = 0; cpu_features_get_time_usec() < deadline; i++)
    {
       unsigned before = presented;
       ret = runloop_iterate();
@@ -1680,7 +1753,25 @@ static void lane_quit_waits_for_save(void)
       presented_waiting += presented - before;
       if (runloop_st->flags & RUNLOOP_FLAG_SHUTDOWN_INITIATED)
          shutdown_early = true;
+      /* The save reaches the core once its backup load is through:
+       * held there for some frames, then let go. */
+      if (held && waited >= SAVE_HELD_FRAMES
+            && core_export("harness_core_serialize_held"))
+      {
+         seen_held = true;
+         core_hold_serialize(0);
+         held = false;
+      }
    }
+   /* Never leave a worker inside the core */
+   core_hold_serialize(0);
+   CHECK(!armed || seen_held,
+         "the save was never inside the core while the quit waited");
+   set_save_state_in_background(false);
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, false);
+   task_queue_unset_threaded();
+   task_queue_check();
    CHECK(ret == -1, "the loop did not end after the save (%u frames)", waited);
    CHECK(waited >= 1, "the quit never waited for the save (%u frames)", waited);
    CHECK(presented_waiting >= 1,
@@ -2236,6 +2327,32 @@ static bool rr_ask(command_t *cmd,
    return ok;
 }
 
+/* Frames a reply has to turn up in once the load it answers is
+ * through: it is sent from the same frame. */
+#define RR_REPLY_GRACE_FRAMES 30
+
+/* As rr_ask(), for a command that must not be answered: waits for the
+ * load the command started to be through, then a grace period for a
+ * reply that should not come. rr_ask() waited out its whole bound -
+ * 5000 frames, 83 s at 60 Hz - for the reply that never comes. */
+static bool rr_ask_unanswered(command_t *cmd,
+      bool (*handler)(command_t *cmd, const char *arg), const char *arg)
+{
+   unsigned n;
+   bool ok;
+   rr_replies  = rr_in_command_replies = 0;
+   rr_reply[0] = '\0';
+   ok          = rr_run(cmd, handler, arg);
+   for (n = 0; n < 5000
+         && (   runloop_is_content_switching()
+             || (content_state_get_ptr()->flags
+                & CONTENT_ST_FLAG_DEFERRED_LOAD_PENDING)); n++)
+      pump(1);
+   for (n = 0; n < RR_REPLY_GRACE_FRAMES && !rr_replies; n++)
+      pump(1);
+   return ok;
+}
+
 /* The harness core running, the menu closed. */
 static void run_harness_core(void)
 {
@@ -2417,6 +2534,362 @@ static void lane_state_slot_reply(void)
       fprintf(stderr, "[pass] state-slot-reply lane\n");
 }
 
+#ifdef HAVE_DYNAMIC
+/* ------------------------------------------------------------------ */
+/* Lane: state load latency                                            */
+/* ------------------------------------------------------------------ */
+
+/* A Load State is never turned away by a task that is not a state
+ * task. Screenshots, Bluetooth and Wi-Fi tasks were TASK_TYPE_BLOCKING,
+ * which made the queue refuse every save and load pushed while one ran:
+ * the hotkey did nothing, silently, for as long as a save's thumbnail
+ * or a 4K capture took to encode, or a ten-second Bluetooth scan; and
+ * one pressed while a save was still writing was dropped as well. Each
+ * case fires Load State as the hotkey does and runs frames until the
+ * core has unserialized the state; a load is a few frames' work. */
+#define STATE_LOAD_MAX_FRAMES 30
+/* The harness's frames take microseconds and the load is the task
+ * thread's work: on a busy machine the bound is that many frames of
+ * a display's instead. */
+#define STATE_LOAD_MAX_USEC (STATE_LOAD_MAX_FRAMES * 16667)
+
+static void core_mark_state(unsigned mark)
+{
+   dylib_t lib = runloop_state_get_ptr()->lib_handle;
+   void (*fn)(unsigned) = lib
+      ? (void (*)(unsigned))dylib_proc(lib, "harness_core_set_state_mark")
+      : NULL;
+   if (fn)
+      fn(mark);
+}
+
+static bool state_any_task(retro_task_t *task, void *user_data)
+{
+   (void)user_data;
+   return !(task_get_flags(task) & RETRO_TASK_FLG_FINISHED);
+}
+
+static bool state_tasks_settle(void)
+{
+   unsigned i;
+   for (i = 0; i < 5000; i++)
+   {
+      if (     !content_save_state_in_progress(NULL)
+            && !content_load_state_in_progress(NULL))
+         return true;
+      pump(1);
+   }
+   return false;
+}
+
+/* Saves the running core marked @mark and waits the save out; the
+ * save's own callback may leave a thumbnail screenshot running. */
+static bool state_save_marked(unsigned mark)
+{
+   core_mark_state(mark);
+   if (!command_event(CMD_EVENT_SAVE_STATE, NULL))
+      return false;
+   return state_tasks_settle();
+}
+
+/* Fires Load State and runs frames until the core has unserialized
+ * @mark; the frames taken, or 0 when it did not land in the bound. */
+static unsigned state_load_frames(unsigned mark)
+{
+   unsigned n;
+   retro_time_t start, held = 0;
+   /* the core runs on with another mark until the load lands */
+   core_mark_state((mark + 1) & 0xff);
+   command_event(CMD_EVENT_LOAD_STATE, NULL);
+   start = cpu_features_get_time_usec();
+   for (n = 1; ; n++)
+   {
+      retro_time_t now;
+      pump(1);
+      if (core_export_ul("harness_core_state_loaded") == mark)
+         return n < STATE_LOAD_MAX_FRAMES ? n : STATE_LOAD_MAX_FRAMES;
+      now = cpu_features_get_time_usec();
+      /* held behind a save still writing, the load has not begun: its
+       * frames are those after the save, which has a minute */
+      if (content_save_state_in_progress(NULL))
+      {
+         if (now - start > 60000000)
+            break;
+         held  = now - start;
+         n     = 0;
+      }
+      else if (  n >= STATE_LOAD_MAX_FRAMES
+            && now - start - held > STATE_LOAD_MAX_USEC)
+         break;
+   }
+   return 0;
+}
+
+static bool state_task_done(retro_task_t *task, void *user_data)
+{
+   (void)user_data;
+   return (task_get_flags(task) & RETRO_TASK_FLG_FINISHED) != 0;
+}
+
+/* Waits, running no frame, until the task thread is through with the
+ * state task in flight: finished, its callback still to come. */
+static bool state_task_wait_done(void)
+{
+   task_finder_data_t find;
+   unsigned i;
+   find.func     = state_task_done;
+   find.userdata = NULL;
+   for (i = 0; i < 5000; i++)
+   {
+      if (task_queue_find(&find))
+      {
+         /* and off the thread's hands */
+         retro_sleep(20);
+         return true;
+      }
+      retro_sleep(1);
+   }
+   return false;
+}
+
+static void lane_state_load_latency(void)
+{
+   settings_t *settings = config_get_ptr();
+   bool compress        = settings->bools.savestate_file_compression;
+   bool thumbnail       = settings->bools.savestate_thumbnail_enable;
+   char path[PATH_MAX_LENGTH];
+   unsigned had = failures, worst = 0, frames, round;
+   static const char *const cases[] = {
+      "after the save", "beside the save's thumbnail",
+      "beside a screenshot", "after a video reinit",
+      "straight after Save State",
+      "between a save's backup load and the save" };
+
+   run_harness_core();
+   /* threaded tasks and compressed states, as most users run */
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, true);
+   task_queue_set_threaded();
+   configuration_set_bool(settings,
+         settings->bools.savestate_file_compression, true);
+   runloop_get_current_savestate_path(path, sizeof(path));
+   remove(path);
+   pump(4);
+
+   for (round = 0; round < 3; round++)
+   {
+      unsigned c;
+      for (c = 0; c < 6; c++)
+      {
+         unsigned mark = 0x10 + round * 6 + c;
+         configuration_set_bool(settings,
+               settings->bools.savestate_thumbnail_enable, c == 1);
+         /* the last: Load State in the same frame as Save State, the
+          * save still writing - held behind it, it loads what it wrote */
+         if (c >= 4)
+         {
+            core_mark_state(mark);
+            CHECK(command_event(CMD_EVENT_SAVE_STATE, NULL),
+                  "the save was not taken (%s)", cases[c]);
+            /* the file is there, so the save starts by loading it for
+             * the undo: that load done on its thread and the save not
+             * yet pushed by its callback, no state task is running -
+             * pushed then, the load read the file the save replaces */
+            if (c == 5)
+               CHECK(state_task_wait_done(),
+                     "the save's backup load did not finish");
+         }
+         else
+            CHECK(state_save_marked(mark), "the save did not finish (%s)",
+                  cases[c]);
+#ifdef HAVE_SCREENSHOTS
+         if (c == 2)
+         {
+            /* taken on the next frame: the load is fired while it runs */
+            command_event(CMD_EVENT_TAKE_SCREENSHOT, NULL);
+            pump(1);
+         }
+#endif
+         if (c == 3)
+         {
+            command_event(CMD_EVENT_REINIT, NULL);
+            pump(1);
+         }
+         frames = state_load_frames(mark);
+         CHECK(frames, "Load State %s did not land within %u frames",
+               cases[c], STATE_LOAD_MAX_FRAMES);
+         if (frames > worst)
+            worst = frames;
+         /* the screenshot and thumbnail out of the way of the next save */
+         {
+            task_finder_data_t find;
+            unsigned i;
+            find.func     = state_any_task;
+            find.userdata = NULL;
+            for (i = 0; i < 600 && task_queue_find(&find); i++)
+               pump(1);
+         }
+         state_tasks_settle();
+      }
+   }
+
+   remove(path);
+   configuration_set_bool(settings,
+         settings->bools.savestate_thumbnail_enable, thumbnail);
+   configuration_set_bool(settings,
+         settings->bools.savestate_file_compression, compress);
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, false);
+   task_queue_unset_threaded();
+   pump(2);
+   if (failures == had)
+      fprintf(stderr, "[pass] state-load-latency lane (worst %u frames)\n",
+            worst);
+}
+#endif
+
+#if defined(HAVE_DYNAMIC) && defined(HAVE_SCREENSHOTS)
+/* ------------------------------------------------------------------ */
+/* Lane: screenshots held                                              */
+/* ------------------------------------------------------------------ */
+
+/* A screenshot asked for while another is encoding is held and taken
+ * after it. Turned away, the Screenshot hotkey did nothing while a
+ * save's thumbnail encoded, and a second screenshot straight after the
+ * first was lost. */
+static void lane_screenshots_held(const char *dir)
+{
+   settings_t *settings = config_get_ptr();
+   bool thumbnail       = settings->bools.savestate_thumbnail_enable;
+   char a[600], b[600], c[600], state[PATH_MAX_LENGTH], thumb[PATH_MAX_LENGTH + 8];
+   unsigned had = failures, i;
+   task_finder_data_t find;
+
+   run_harness_core();
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, true);
+   task_queue_set_threaded();
+   pump(4);
+   snprintf(a, sizeof(a), "%s/held_shot_a.png", dir);
+   snprintf(b, sizeof(b), "%s/held_shot_b.png", dir);
+   snprintf(c, sizeof(c), "%s/held_shot_c.png", dir);
+   remove(a);
+   remove(b);
+   remove(c);
+   find.func     = state_any_task;
+   find.userdata = NULL;
+
+   /* the second while the first is still encoding */
+   CHECK(take_screenshot(dir, a, false, false, true, true),
+         "the first screenshot was not taken");
+   CHECK(take_screenshot(dir, b, false, false, true, true),
+         "a screenshot asked for while one encodes was turned away");
+   for (i = 0; i < 600 && task_queue_find(&find); i++)
+      pump(1);
+   CHECK(path_is_valid(a) && path_is_valid(b),
+         "both screenshots were not written (%d, %d)",
+         path_is_valid(a), path_is_valid(b));
+
+   /* the hotkey's screenshot behind a save's thumbnail */
+   configuration_set_bool(settings,
+         settings->bools.savestate_thumbnail_enable, true);
+   runloop_get_current_savestate_path(state, sizeof(state));
+   snprintf(thumb, sizeof(thumb), "%s.png", state);
+   remove(thumb);
+   CHECK(command_event(CMD_EVENT_SAVE_STATE, NULL), "the save was not taken");
+   CHECK(state_tasks_settle(), "the save did not finish");
+   CHECK(take_screenshot(dir, c, false, false, true, true),
+         "a screenshot behind a save's thumbnail was turned away");
+   for (i = 0; i < 600 && task_queue_find(&find); i++)
+      pump(1);
+   CHECK(path_is_valid(c), "the screenshot behind the thumbnail was not written");
+   CHECK(path_is_valid(thumb), "the save's thumbnail was not written");
+
+   remove(a);
+   remove(b);
+   remove(c);
+   remove(thumb);
+   remove(state);
+   configuration_set_bool(settings,
+         settings->bools.savestate_thumbnail_enable, thumbnail);
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, false);
+   task_queue_unset_threaded();
+   pump(2);
+   if (failures == had)
+      fprintf(stderr, "[pass] screenshots-held lane\n");
+}
+#endif
+
+#ifdef HAVE_DYNAMIC
+/* ------------------------------------------------------------------ */
+/* Lane: state hold full                                               */
+/* ------------------------------------------------------------------ */
+
+static bool queued_message(const char *want);
+
+/* Saves and loads behind the one in flight are held up to a bound;
+ * one past it is turned away, and says so rather than the hotkey
+ * doing nothing. The held ones still run. */
+static void lane_state_hold_full(void)
+{
+   settings_t *settings = config_get_ptr();
+   bool thumbnail       = settings->bools.savestate_thumbnail_enable;
+   char path[PATH_MAX_LENGTH];
+   unsigned had = failures, i, taken = 0;
+
+   run_harness_core();
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, true);
+   task_queue_set_threaded();
+   configuration_set_bool(settings,
+         settings->bools.savestate_thumbnail_enable, false);
+   runloop_get_current_savestate_path(path, sizeof(path));
+   remove(path);
+   pump(4);
+   CHECK(state_save_marked(0x40), "the first save did not finish");
+
+   queued_message("");
+   /* a save in flight, and six loads in the same frame behind it */
+   CHECK(command_event(CMD_EVENT_SAVE_STATE, NULL), "the save was not taken");
+   for (i = 0; i < 6; i++)
+      if (command_event(CMD_EVENT_LOAD_STATE, NULL))
+         taken++;
+   CHECK(taken > 0 && taken < 6,
+         "%u of 6 loads behind a save were taken, not some", taken);
+   CHECK(queued_message(msg_hash_to_str(MSG_FAILED_TO_LOAD_STATE)),
+         "a load turned away said nothing on screen");
+
+   /* With Increment Save State Index on, the slot moves up before the
+    * save is pushed; a save turned away wrote nothing there, and left
+    * advanced the slot named one the next load found empty. */
+   {
+      bool auto_index = settings->bools.savestate_auto_index;
+      int  slot       = settings->ints.state_slot;
+      configuration_set_bool(settings,
+            settings->bools.savestate_auto_index, true);
+      CHECK(!command_event(CMD_EVENT_SAVE_STATE, NULL),
+            "a save past the hold was taken");
+      CHECK(settings->ints.state_slot == slot,
+            "a save turned away moved the slot from %d to %d",
+            slot, settings->ints.state_slot);
+      configuration_set_bool(settings,
+            settings->bools.savestate_auto_index, auto_index);
+   }
+   CHECK(state_tasks_settle(), "the held loads did not finish");
+
+   remove(path);
+   configuration_set_bool(settings,
+         settings->bools.savestate_thumbnail_enable, thumbnail);
+   configuration_set_bool(settings,
+         settings->bools.threaded_data_runloop_enable, false);
+   task_queue_unset_threaded();
+   pump(2);
+   if (failures == had)
+      fprintf(stderr, "[pass] state-hold-full lane (%u of 6 taken)\n", taken);
+}
+#endif
+
 #if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
 /* ------------------------------------------------------------------ */
 /* Lane: playlist Load State slot                                      */
@@ -2452,8 +2925,7 @@ static bool settle(void)
 }
 
 /* Saves the running core to @slot, its state marked @mark: retried
- * across frames while another blocking task (the previous save's
- * thumbnail) holds the queue. */
+ * across frames while another state task holds the queue. */
 static bool save_marked_slot(unsigned slot, unsigned mark, const char *path)
 {
    settings_t *settings = config_get_ptr();
@@ -2731,7 +3203,7 @@ static void lane_content_reply(const char *dir)
    /* a line-based interface has never been told, and is not */
    cmd.structured = false;
    snprintf(arg, sizeof(arg), "%s|%s", core_path, content);
-   rr_ask(&cmd, command_load_content, arg);
+   rr_ask_unanswered(&cmd, command_load_content, arg);
    CHECK(rr_replies == 0, "a line-based interface was answered \"%s\"",
          rr_reply);
    cmd.structured = true;
@@ -2789,9 +3261,11 @@ static bool ss_check_late(void)
       >= SS_SLICE_PERIOD_USEC;
 }
 
+/* The only other task these lanes run is the hog */
 static bool ss_is_screenshot(retro_task_t *task, void *user_data)
 {
-   if (task->type != TASK_TYPE_BLOCKING)
+   if (     task->handler == ss_hog_handler
+         || (task_get_flags(task) & RETRO_TASK_FLG_FINISHED))
       return false;
    if (user_data)
       *(retro_task_t**)user_data = task;
@@ -3609,6 +4083,15 @@ int main(int argc, char *argv[])
    lane_replay_reply(dir);
 #endif
    lane_state_slot_reply();
+#ifdef HAVE_DYNAMIC
+   lane_state_load_latency();
+#endif
+#if defined(HAVE_DYNAMIC) && defined(HAVE_SCREENSHOTS)
+   lane_screenshots_held(dir);
+#endif
+#ifdef HAVE_DYNAMIC
+   lane_state_hold_full();
+#endif
 #if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
    lane_playlist_state_slot();
    lane_core_title_held();

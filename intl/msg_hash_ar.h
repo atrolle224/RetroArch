@@ -1138,6 +1138,7 @@ static const struct
    char s_9329c64c[13];
    char s_f8883f70[28];
    char s_09ba892e[11];
+   char s_047623ff[19];
    char s_58b9d895[16];
    char s_0a2aa953[24];
    char s_ffd0dac4[9];
@@ -1464,6 +1465,7 @@ static const struct
    char s_caf61308[13];
    char s_5410e874[11];
    char s_c7a27b20[13];
+   char s_d6611158[11];
    char s_de16b5d2[9];
    char s_57665cff[13];
    char s_0e2c0fca[31];
@@ -1522,6 +1524,7 @@ static const struct
    char s_8f379310[52];
    char s_6a9b757c[44];
    char s_6c52dfb1[42];
+   char s_334daaaa[9];
    char s_84c46931[42];
    char s_ebf10493[22];
    char s_83e8dc72[35];
@@ -4369,6 +4372,7 @@ static const struct
    "\330\247\331\204\330\261\331\202\331\205 \330\247\331\204\330\252\330\263\331\204\330\263\331"
    "\204\331\212",
    "\330\243\330\271\330\257\330\247\330\257",
+   "\330\247\331\204\330\252\330\265\331\206\331\212\331\201\330\247\330\252",
    "\330\252\330\265\331\206\331\212\331\201 TGDB",
    "\331\206\331\205\330\267 \330\247\331\204\331\205\330\261\331\203\330\250\330\247\330\252",
    "\330\250\330\265\330\261\331\212",
@@ -4843,6 +4847,7 @@ static const struct
    "\330\252\331\204\331\202\330\247\330\246\331\212",
    "\330\257\330\247\330\246\331\205\330\247",
    "\330\252\331\204\331\202\330\247\330\246\331\212",
+   "\331\204\330\247\330\264\331\212\330\241",
    "\330\271\330\247\330\257\331\212",
    "\330\247\331\204\331\205\330\256\330\261\330\254",
    "\330\252\330\265\330\255\331\212\330\255 Overscan (\330\243\330\263\331\201\331\204)",
@@ -4933,6 +4938,7 @@ static const struct
    "\247\330\264\330\251 \330\247\331\204\330\263\330\247\330\257\330\263",
    "\330\247\331\204\331\205\330\262\330\247\331\205\331\206\330\251 \330\247\331\204\330\271\331"
    "\205\331\210\330\257\331\212\330\251 (VSync)",
+   "\331\206\330\270\330\247\331\205",
    "\331\210\330\266\330\271 \331\205\331\204\330\241 \330\247\331\204\330\264\330\247\330\264\330"
    "\251 \330\247\331\204\331\206\330\247\331\201\330\260\330\251",
    "\331\210\330\266\330\271 \330\247\331\204\331\206\331\210\330\247\331\201\330\260",
@@ -7896,7 +7902,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_ar_blob_check[
-      (sizeof(msg_hash_ar_blob) == (106251u
+      (sizeof(msg_hash_ar_blob) == (106290u
 #ifdef HAVE_LAKKA
        + 287u
 #endif
@@ -9233,6 +9239,7 @@ static const msg_hash_id_t msg_hash_ar_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SCORE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SERIAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SETTING,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TAGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TGDB_RATING,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VEHICULAR,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VISUAL,
@@ -9559,6 +9566,7 @@ static const msg_hash_id_t msg_hash_ar_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_AUTO,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_NONE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_NORMAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OUTPUT_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OVERSCAN_CORRECTION_BOTTOM,
@@ -9617,6 +9625,7 @@ static const msg_hash_id_t msg_hash_ar_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VI_WIDTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VSYNC,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WINDOWED_FULLSCREEN,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WINDOWED_MODE_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WINDOW_AUTO_WIDTH_MAX,

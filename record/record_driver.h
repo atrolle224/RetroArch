@@ -207,8 +207,16 @@ extern const record_driver_t *record_drivers[];
 /* Common native GPU controller hooks. Keep one call at frame/runloop sites;
  * platform backends own their worker and snapshot retirement. */
 RETRO_BEGIN_DECLS
+/* Cold registry/capability queries; descriptors are process-lifetime borrows. */
+const record_driver_t *recording_driver_find(const char *ident);
+bool recording_driver_can_stream(const char *ident);
+bool recording_driver_streaming_mode_supported(const char *ident, unsigned mode);
+
 extern const record_driver_t record_nvenc;
 extern const record_driver_t record_metal;
+#ifdef HAVE_RECORD_VULKAN
+extern const record_driver_t record_vulkan;
+#endif
 #if defined(HAVE_RECORD_MEDIACODEC) || defined(RECORD_MEDIACODEC_TEST)
 extern const record_driver_t record_mediacodec;
 #endif
@@ -228,6 +236,10 @@ bool recording_gpu_cancel_start(void);
 RETRO_END_DECLS
 static INLINE bool recording_is_native_gpu(const record_driver_t *driver)
 {
+#ifdef HAVE_RECORD_VULKAN
+   if (driver == &record_vulkan)
+      return true;
+#endif
 #if defined(HAVE_RECORD_MEDIACODEC) || defined(RECORD_MEDIACODEC_TEST)
    if (driver == &record_mediacodec)
       return true;

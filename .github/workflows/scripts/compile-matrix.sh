@@ -58,6 +58,7 @@ check() {
 }
 
 AUDIO="libretro-common/formats/audio_transfer.c libretro-common/audio/audio_mixer.c"
+check "wma only" "-DHAVE_RWMA" $AUDIO
 
 echo "== audio codec combinations =="
 # the sets real platform makefiles select, plus each codec alone and none
@@ -872,6 +873,13 @@ for tu in libretro-common/crypto/crypto.c libretro-common/crypto/kdf.c libretro-
    android_clang "android clang/aarch64: $(basename $tu)" "$ANDROID_NET" "$tu"
 done
 android_clang "android clang/aarch64: camera" "-Itools/platform_stubs/android -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DHAVE_CAMERA -DRARCH_INTERNAL -include tools/platform_stubs/android/jni.h -include frontend/drivers/platform_unix.h -include verbosity.h" camera/drivers/android.c
+# The core signature files' Android branches, otherwise compiled only inside
+# griffin on the Android job
+CORESIG_ANDROID="-Itools/platform_stubs/android -DHAVE_CRYPTO -DHAVE_DYNAMIC -DHAVE_CORE_SIGNATURES -DHAVE_CORE_LOAD_CHECK -DRARCH_INTERNAL -D_GNU_SOURCE -include tools/platform_stubs/android/jni.h"
+for tu in core_signature.c core_signature_io.c core_trust_runtime.c core_install_check.c core_load_file.c core_load_check.c; do
+   android_clang "android clang/aarch64: $tu" "$CORESIG_ANDROID" "$tu"
+   check "android: $tu" "-DANDROID -D__ANDROID__ $CORESIG_ANDROID $CDECL" "$tu"
+done
 # rwebaudio is its own translation unit in the emscripten build, not
 # part of griffin's, and nothing else compiles it at all.
 check "emscripten: rwebaudio"  "$HOSTOFF -Itools/platform_stubs/emscripten -D__EMSCRIPTEN__ -DEMSCRIPTEN -DHAVE_RWEBAUDIO $CDECL" audio/drivers/rwebaudio.c
@@ -1081,7 +1089,7 @@ check_gates "griffin: HAVE_RETROSMB + cloud sync"  "$UIDEFS -DRARCH_INTERNAL -DH
 # griffin can carry. A static helper in one translation unit that
 # another one also defines (get32 in net_smb2.c and rvorbis.c) only
 # collides here, so this lane carries as much of griffin as a host can.
-GRIFFIN_FULL="-DRARCH_INTERNAL -DHAVE_GRIFFIN=1 -DHAVE_MENU -DHAVE_RGUI -DHAVE_XMB -DHAVE_OZONE -DHAVE_MATERIALUI -DHAVE_GFX_WIDGETS -DHAVE_OVERLAY -DHAVE_CONFIGFILE -DHAVE_CHEEVOS -DRC_DISABLE_LUA -DHAVE_RUNAHEAD -DHAVE_REWIND -DHAVE_PATCH -DHAVE_XDELTA -DHAVE_CHEATS -DHAVE_SCREENSHOTS -DHAVE_TRANSLATE -DHAVE_LIBRETRODB -DHAVE_DYNAMIC -DHAVE_DYLIB -DHAVE_THREADS -DHAVE_AUDIOMIXER -DHAVE_DSP_FILTER -DHAVE_VIDEO_FILTER -DHAVE_RWAV -DHAVE_RFLAC -DHAVE_RVORBIS -DHAVE_RMP3 -DHAVE_RAC3 -DHAVE_RPNG -DHAVE_RJPEG -DHAVE_RBMP -DHAVE_RTGA -DHAVE_RWEBP -DHAVE_RDDS -DHAVE_RZSTD -DHAVE_7ZIP -DHAVE_CHD -DHAVE_RCHD -DHAVE_STB_FONT -DHAVE_NETWORKING -DHAVE_IFINFO -DHAVE_NETWORK_CMD -DHAVE_NETPLAYDISCOVERY -DHAVE_ONLINE_UPDATER -DHAVE_UPDATE_ASSETS -DHAVE_UPDATE_CORES -DHAVE_UPDATE_CORE_INFO -DHAVE_CORE_INFO_CACHE -DHAVE_CLOUDSYNC -DHAVE_S3 -DHAVE_CRYPTO -DHAVE_KEYCHAIN -DHAVE_SSL -DHAVE_RETROSSL -DHAVE_SMBCLIENT -DHAVE_RETROSMB -DHAVE_NFSCLIENT -DHAVE_RETRONFS -DHAVE_LANGEXTRA -DHAVE_SHADERPIPELINE -DHAVE_GLSL -DHAVE_OPENGL -D_GNU_SOURCE"
+GRIFFIN_FULL="-DRARCH_INTERNAL -DHAVE_GRIFFIN=1 -DHAVE_MENU -DHAVE_RGUI -DHAVE_XMB -DHAVE_OZONE -DHAVE_MATERIALUI -DHAVE_GFX_WIDGETS -DHAVE_OVERLAY -DHAVE_CONFIGFILE -DHAVE_CHEEVOS -DRC_DISABLE_LUA -DHAVE_RUNAHEAD -DHAVE_REWIND -DHAVE_PATCH -DHAVE_XDELTA -DHAVE_CHEATS -DHAVE_SCREENSHOTS -DHAVE_TRANSLATE -DHAVE_LIBRETRODB -DHAVE_DYNAMIC -DHAVE_DYLIB -DHAVE_THREADS -DHAVE_AUDIOMIXER -DHAVE_DSP_FILTER -DHAVE_VIDEO_FILTER -DHAVE_RWAV -DHAVE_RFLAC -DHAVE_RVORBIS -DHAVE_RMP3 -DHAVE_RAC3 -DHAVE_RPNG -DHAVE_RJPEG -DHAVE_RBMP -DHAVE_RTGA -DHAVE_RGIF -DHAVE_RWEBP -DHAVE_RDDS -DHAVE_RZSTD -DHAVE_7ZIP -DHAVE_CHD -DHAVE_RCHD -DHAVE_STB_FONT -DHAVE_NETWORKING -DHAVE_IFINFO -DHAVE_NETWORK_CMD -DHAVE_NETPLAYDISCOVERY -DHAVE_ONLINE_UPDATER -DHAVE_UPDATE_ASSETS -DHAVE_UPDATE_CORES -DHAVE_UPDATE_CORE_INFO -DHAVE_CORE_INFO_CACHE -DHAVE_CLOUDSYNC -DHAVE_S3 -DHAVE_CRYPTO -DHAVE_KEYCHAIN -DHAVE_SSL -DHAVE_RETROSSL -DHAVE_SMBCLIENT -DHAVE_RETROSMB -DHAVE_NFSCLIENT -DHAVE_RETRONFS -DHAVE_LANGEXTRA -DHAVE_SHADERPIPELINE -DHAVE_GLSL -DHAVE_OPENGL -D_GNU_SOURCE"
 check_gates "griffin: full unity (every codec + network stack)" "$UIDEFS $GRIFFIN_FULL" griffin/griffin.c
 # The SMB show-settings row read a HAVE_MENU-only default under
 # HAVE_SMBCLIENT alone; with the built-in client on by default that
@@ -1357,7 +1365,7 @@ else
       | grep -vE '^(deps|samples|libretro-common/samples|tools|pkg|os|wiiu)/')
 fi
 SCE_CC=${SCE_CC:-clang}
-SCE_SYS="-isystem /usr/include"
+SCE_SYS="-isystem tools/platform_stubs/sce -isystem /usr/include"
 [ -d /usr/include/x86_64-linux-gnu ] \
    && SCE_SYS="$SCE_SYS -isystem /usr/include/x86_64-linux-gnu"
 SCE_DEFS="-DRARCH_INTERNAL -DHAVE_THREADS -DHAVE_REWIND -DHAVE_CHEATS -D_BSD_SOURCE"

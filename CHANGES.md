@@ -1,4 +1,21 @@
 # Future
+- LIBRETRO-COMMON/FILESTREAM: Under a VFS v7 frontend, filestream_get_mapped_ptr hands a core the frontend's mapping of a file it opened with the frequent-access hint, as it does without a frontend VFS; cores that read content in place from the mapping no longer copy it all under RetroArch
+- VFS/WIN32: Opening, deleting and renaming a file make its name wide (UTF-16) on the stack instead of in an allocation, as a stat now does, and a stat's wide name takes MAX_PATH characters of stack instead of PATH_MAX_LENGTH (4 KB less): with it the Windows sample build had stopped at its 2048-byte stack frame limit. A path longer than MAX_PATH is still allocated. Also, a stat of a path shorter than its trailing separators no longer frees the stack buffer
+- LIBRETRO: VFS API v7 - cores can borrow a file's bytes instead of copying them (view), map a whole file read-only (map), ask which file a handle or path is (identity, stat_identity), what its volume is (volume, stat_volume: read-only, drive kind, mount) and seal or measure it with fs-verity on Linux and Android (verity_enable, verity_measure); libretro-common's filestream and the hybrid VFS take them, and answer "can't be told" under a frontend before v7
+- LIBRETRO-COMMON/VFS: On Linux, macOS and the BSDs a build without HAVE_MMAP (most cores) reads bulk and stable opens through the file descriptor too, as RetroArch already did, instead of through stdio
+- VFS/WIN32: A stat (path_stat, path_is_valid, path_is_directory, path_get_size, get_mtime) is one query of the file system instead of two - the size comes from the same GetFileAttributesExW as the attributes and the time, and only a reparse point still asks _wstat64 for its target's size - and the wide path is converted on the stack instead of allocated
+- X11: 'Display Pacing On VBlank Events' holds Vulkan and OpenGL through EGL as well only where no compositor shows the window: it asked to bypass one, or none runs
+- X11: 'Display Pacing On VBlank Events' holds on the vblanks of the window's CRTC, from the Present extension, with Vulkan in immediate mode and with OpenGL where no compositor shows the window
+- KMS: 'Display Pacing On VBlank Events' holds on the CRTC's vblanks with OpenGL on KMS, where V-Sync off page flips are asynchronous
+- VULKAN/OPENGL: 'Display Pacing On VBlank Events' also holds Vulkan and OpenGL where they present through DXGI, tear, and the display flips the fullscreen window itself
+- D3D11/D3D12: 'Display Pacing On VBlank Events' holds only where the display flips a fullscreen window straight to the scanout; where DWM composes it, as across two GPUs, the timer paces
+- VIDEO/THREADED: 'Display Pacing On VBlank Events' (off by default): with Display Pacing, V-Sync off and fullscreen, each core frame is released on the display's own vblank events instead of a timer, where the display server has them (Windows) and the driver's present tears (Direct3D 11/12, Vulkan immediate mode); the timer paces everywhere else and whenever the events stop or keep no fixed rate
+- VIDEO/THREADED: With V-Sync off, Display Pacing holds the core to the content's rate before the first frame is presented too; at content start or after a driver reinit a core ran hundreds or thousands of frames at once with audio sync off as well
+- WIN32: Scanline Sync reads the scanline of the monitor the window is on, and follows the window to another; it read the first display's wherever the window was
+- LIBRETRO-COMMON/FLAC: 24- and 32-bit FLAC decoded to 16 bits is rounded to the nearest step instead of cut down (every sample was half a step low on average); 16-bit FLAC is unchanged
+- LIBRETRO-COMMON/FLAC: A seek in a FLAC that has a seek table lands on the frame asked for (it landed as far past it as the seek point was from the start); rflac_seek_point gives the seek point's frame
+- D3D11: Software-rendering cores draw straight into lent staging textures, copied to the frame texture on the GPU instead of by the CPU
+- VULKAN: Keep the pipeline cache on disk between runs, one file per GPU, so stock and slang shader pipelines are not recompiled by the driver on every launch, preset load or driver reinit
 - LINUX: Game Mode implemented natively (I/O priority plus a power-profiles-daemon performance hold); Feral libgamemode is no longer loaded and deps/feralgamemode is removed
 - NETPLAY/REPLAY: Record all players' resolved inputs in BSV replays, committing each frame and its checkpoints only after rollback confirmation
 - 3DS: Remove bottom screen fade out animation
@@ -145,6 +162,7 @@
 - SCAN: Interpret M3U files during scanning
 - SCAN: Merge manual and automatic scan into a more flexible setup
 - SCAN: Improve GDI content recognition
+- SCAN: --scan runs every path and exits with what the scans did; Manual Scan options, --scan-refresh and --scan-refresh-all on the command line; Refresh All Playlists in Manage Playlists
 - SHADER: Display on-screen error when preset load fails
 - SHADER: Add gyroscope / accelerometer uniforms for shaders
 - SHADER: Add aggressive shader caching to slang shader backend

@@ -85,6 +85,9 @@ typedef struct gfx_ctx_x_data
 #endif
 
    int interval;
+   /* Whether a swap goes past a compositor: the window asked to, or
+    * there is none (gfx_ctx_x_present_immediate) */
+   bool uncomposed;
 } gfx_ctx_x_data_t;
 
 /* TODO/FIXME - static globals */
@@ -275,6 +278,13 @@ static retro_time_t gfx_ctx_x_last_present_time(void *data)
    return (retro_time_t)ust;
 }
 #endif
+
+/* A swap with no interval tears where no compositor shows it. */
+static bool gfx_ctx_x_present_immediate(void *data)
+{
+   gfx_ctx_x_data_t *x = (gfx_ctx_x_data_t*)data;
+   return x && x->interval == 0 && x->uncomposed;
+}
 
 static void gfx_ctx_x_swap_interval(void *data, int interval)
 {
@@ -611,6 +621,8 @@ static bool gfx_ctx_x_set_video_mode(void *data,
       RARCH_LOG("[GLX] Requesting compositor bypass.\n");
       XChangeProperty(g_x11_dpy, g_x11_win, net_wm_bypass_compositor, cardinal, 32, PropModeReplace, (const unsigned char*)&value, 1);
    }
+
+   x->uncomposed = x11_window_uncomposed(fullscreen && disable_composition);
 
    if (opacity < (unsigned)-1)
    {
@@ -1224,6 +1236,9 @@ static uint32_t gfx_ctx_x_get_flags(void *data)
          {
 #if defined(HAVE_SLANG) && (defined(HAVE_SPIRV_CROSS) || defined(HAVE_RSLC))
             BIT32_SET(flags, GFX_CTX_FLAGS_SHADERS_SLANG);
+#elif defined(HAVE_GLSL)
+            /* No slang to draw through: glcore draws through GLSL */
+            BIT32_SET(flags, GFX_CTX_FLAGS_SHADERS_GLSL);
 #endif
          }
          else
@@ -1340,10 +1355,12 @@ const gfx_ctx_driver_t gfx_ctx_x = {
 #if defined(HAVE_OPENGL) || defined(HAVE_OPENGL1) || defined(HAVE_OPENGL_CORE)
    gfx_ctx_x_shared_context_new,
    gfx_ctx_x_shared_context_bind,
-   gfx_ctx_x_shared_context_free
+   gfx_ctx_x_shared_context_free,
 #else
    NULL, /* shared_context_new */
    NULL, /* shared_context_bind */
-   NULL  /* shared_context_free */
+   NULL, /* shared_context_free */
 #endif
+   NULL, /* windows */
+   gfx_ctx_x_present_immediate
 };

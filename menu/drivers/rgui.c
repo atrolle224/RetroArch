@@ -351,7 +351,15 @@ typedef struct
     * it (the output may be a loaned driver buffer, which is not read
     * back). Grown only when the output gets wider. */
    uint16_t *upscale_line;
+   /* The menu's own text, drawn by the next rgui_render() */
+   const char *msgbox;
+   /* The dialog's buttons as the framebuffer shows them */
+   int msgbox_highlight;
+   int msgbox_hover;
+   uint8_t msgbox_epoch;
    unsigned upscale_line_width;
+   unsigned upscale_map_src_width;
+   unsigned upscale_map_width;
 
    thumbnail_t fs_thumbnail;
    thumbnail_t mini_thumbnail;
@@ -410,7 +418,8 @@ typedef struct
    char entry_index_offset;
 
    char menu_title[NAME_MAX_LENGTH];              /* Must be a fixed length array... */
-   char msgbox[1024];
+   /* The message box text the framebuffer shows, empty for none */
+   char msgbox_drawn[MENU_LABEL_MAX_LENGTH];
    char savestate_thumbnail_file_path[PATH_MAX_LENGTH];
    char theme_preset_path[PATH_MAX_LENGTH];       /* Must be a fixed length array... */
    char theme_dynamic_path[PATH_MAX_LENGTH];      /* Must be a fixed length array... */
@@ -5251,19 +5260,32 @@ static void rgui_set_blit_functions(
  * rgui_blit_line/rgui_blit_symbol() END
  * ============================== */
 
+/* The button under the pointer, as the dialog's buttons show it */
+static int rgui_msgbox_hover(const menu_dialog_t *d)
+{
+   if (d->button_count)
+      return d->button_hover;
+   if (d->confirm_hover_back)
+      return 0;
+   return d->confirm_hover_ok ? 1 : -1;
+}
+
 static void rgui_set_message(void *data, const char *message)
 {
    rgui_t           *rgui = (rgui_t*)data;
+   const menu_dialog_t *d = &menu_state_get_ptr()->dialog_st;
 
    if (!rgui || !message)
       return;
 
-   rgui->msgbox[0] = '\0';
+   rgui->msgbox    = message;
 
-   if (message && *message)
-      strlcpy(rgui->msgbox, message, sizeof(rgui->msgbox));
-
-   rgui->flags |= RGUI_FLAG_FORCE_REDRAW;
+   /* The framebuffer keeps the box: drawn again only when it changed */
+   if (     rgui->msgbox_epoch     != d->button_epoch
+         || rgui->msgbox_highlight != d->button_highlight
+         || rgui->msgbox_hover     != rgui_msgbox_hover(d)
+         || strcmp(rgui->msgbox_drawn, message))
+      rgui->flags |= RGUI_FLAG_FORCE_REDRAW;
 }
 
 static void rgui_render_messagebox(
@@ -5281,13 +5303,21 @@ static void rgui_render_messagebox(
    unsigned height            = 0;
    unsigned line_count        = 0;
    char *lines[128];
+   unsigned glyphs[128];
    size_t msg_len;
    size_t wrapped_len;
    uint16_t *frame_buf_data   = rgui->frame_buf.data;
    struct menu_state *menu_st = menu_state_get_ptr();
-   bool confirm_dialog        = (menu_st->dialog_st.confirm_cmd) ? true : false;
+   menu_dialog_buttons_t buttons;
+   int button_w[MENU_DIALOG_BUTTONS_MAX];
+   int button_x[MENU_DIALOG_BUTTONS_MAX];
+   unsigned button_rows       = 0;
+   int row_step               = 0;
+   int rows_y                 = 0;
+   unsigned firmware_line_state = 0;
 
    wrapped_message[0]         = '\0';
+   menu_dialog_get_buttons(menu_st, &buttons);
 
    msg_len                    = strlen(message);
 
@@ -5321,20 +5351,57 @@ static void rgui_render_messagebox(
 
    for (i = 0; i < line_count; i++)
    {
-      char     *msg         = lines[i];
-      unsigned msglen       = (unsigned)utf8len(msg);
+      unsigned msglen       = (unsigned)utf8len(lines[i]);
       unsigned line_width   = msglen * rgui->font_width_stride - 1 + 6 + 10;
+      glyphs[i]             = msglen;
       width                 = MAX(width, line_width);
       glyphs_width          = MAX(glyphs_width, msglen);
    }
 
+   /* The buttons: a glyph either side of each label, two between */
+   if (buttons.count)
+   {
+      int stride = (int)rgui->font_width_stride;
+      /* The most glyphs a box on this framebuffer can be wide */
+      int fit    = ((int)fb_width - 15) / stride;
+      int need;
+      unsigned b;
+      for (b = 0; b < buttons.count; b++)
+         button_w[b] = ((int)utf8len(msg_hash_to_str(
+               (enum msg_hash_enums)buttons.label[b])) + 2) * stride;
+      need        = menu_dialog_buttons_layout(button_w, buttons.count,
+            stride * 2, 0, 0, NULL);
+      row_step    = (int)rgui->font_height_stride + 2;
+      button_rows = 1;
+      /* Wider than the widest box: one button per line */
+      if (need > fit * stride)
+      {
+         button_rows = buttons.count;
+         need        = 0;
+         for (b = 0; b < buttons.count; b++)
+            need     = MAX(need, button_w[b]);
+      }
+      if (need > (int)glyphs_width * stride)
+      {
+         int cells = (need + stride - 1) / stride;
+         if (cells > fit)
+            cells  = fit;
+         if (cells > (int)glyphs_width)
+         {
+            glyphs_width = (unsigned)cells;
+            width        = glyphs_width * stride - 1 + 6 + 10;
+         }
+      }
+   }
+
    height                   = (unsigned)(rgui->font_height_stride * line_count + 6 + 10);
+
+   if (buttons.count)
+      height               += (unsigned)(row_step * (int)button_rows)
+            + rgui->font_height_stride;
+
    x                        = ((int)fb_width  - (int)width) / 2;
    y                        = ((int)fb_height - (int)height) / 2;
-
-   /* Extra room for confirm buttons */
-   if (confirm_dialog)
-      height               += rgui->font_height_stride * 2;
 
    if (height > fb_height)
       height                = fb_height;
@@ -5342,6 +5409,9 @@ static void rgui_render_messagebox(
       x                     = 0;
    if (y < 0)
       y                     = 0;
+   if (buttons.count)
+      rows_y                = y + (int)height - row_step * (int)button_rows
+            - (int)(rgui->font_height_stride / 2) - 2;
 
    if (frame_buf_data)
    {
@@ -5393,7 +5463,9 @@ static void rgui_render_messagebox(
       for (i = 0; i < line_count; i++)
       {
          const char *msg = lines[i];
-         int offset_x    = (int)(rgui->font_width_stride * (glyphs_width - utf8len(msg)) / 2);
+         const char *path = menu_dialog_firmware_path_line(menu_st,
+               msg, &firmware_line_state);
+         int offset_x    = (int)(rgui->font_width_stride * (glyphs_width - glyphs[i]) / 2);
          int offset_y    = (int)(rgui->font_height_stride * i);
          int text_x      = x + 8 + offset_x;
          int text_y      = y + 8 + offset_y;
@@ -5402,84 +5474,67 @@ static void rgui_render_messagebox(
           * framebuffer */
          if (text_y > (int)fb_height - 10 - (int)rgui->font_height_stride)
             break;
+         /* A box taller than the screen keeps its buttons */
+         if (buttons.count && text_y + (int)rgui->font_height_stride > rows_y)
+            break;
 
          rgui_blit_line(rgui, fb_width, text_x, text_y, msg,
                rgui->colors.normal_color, rgui->colors.shadow_color);
+
+         if (path)
+            rgui_color_rect(frame_buf_data, fb_dims,
+                  text_x + (path - msg) * rgui->font_width_stride,
+                  text_y + VIDEO_SCALE_H(rgui->font_dims),
+                  utf8len(path) * rgui->font_width_stride - 1, 1,
+                  rgui->colors.normal_color);
       }
 
-      if (confirm_dialog)
+      if (buttons.count)
       {
-         const char *str_back                   = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_BACK);
-         const char *str_ok                     = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_OK);
-         size_t str_back_width                  = strlen(str_back) * rgui->font_width_stride;
-         size_t str_ok_width                    = strlen(str_ok) * rgui->font_width_stride;
-         /* Every offset here is a whole number of framebuffer
-          * pixels: the half a glyph the padding used to be always
-          * appeared in pairs that added back up to one. The two
-          * that do not - the hit box's top edge and its height -
-          * are the halves the float arithmetic truncated away. */
-         unsigned icon_size                     = rgui->font_width_stride;
-         int icon_x                             = x + (int)(icon_size * 4);
-         int icon_y                             = (int)fb_height - y;
-         int cursor_x                           = icon_x - (int)icon_size;
-         int cursor_y                           = icon_y - (int)((icon_size + 1) / 2);
-         int cursor_w                           = (int)(icon_size * 2 + str_back_width);
-         int cursor_h                           = (int)((icon_size * 5) / 2);
+         int cursor_h = (int)rgui->font_height_stride;
+         int hover    = -1;
+         unsigned b;
 
-         /* Back */
-         if (     VIDEO_POS_X(rgui->pointer.pos) >= cursor_x
-               && VIDEO_POS_X(rgui->pointer.pos) <= cursor_x + cursor_w
-               && VIDEO_POS_Y(rgui->pointer.pos) >= cursor_y
-               && VIDEO_POS_Y(rgui->pointer.pos) <= cursor_y + cursor_h)
-         {
-            menu_st->dialog_st.confirm_hover_back = true;
-
-            rgui_fill_rect(frame_buf_data, fb_dims,
-                  cursor_x,
-                  cursor_y,
-                  cursor_w,
-                  cursor_h,
-                  rgui->colors.bg_dark_color, rgui->colors.bg_light_color,
-                  (rgui->flags & RGUI_FLAG_BG_THICKNESS) ? true : false);
-         }
+         if (button_rows == 1)
+            menu_dialog_buttons_layout(button_w, buttons.count,
+                  (int)rgui->font_width_stride * 2, x + 8,
+                  (int)(glyphs_width * rgui->font_width_stride), button_x);
          else
-            menu_st->dialog_st.confirm_hover_back = false;
+            for (b = 0; b < buttons.count; b++)
+               button_x[b] = x + ((int)width - button_w[b]) / 2;
 
-         rgui_blit_line(rgui, fb_width, icon_x, icon_y, str_back,
-               (menu_st->dialog_st.confirm_hover_back)
-                     ? rgui->colors.hover_color
-                     : rgui->colors.normal_color,
-               rgui->colors.shadow_color);
-
-         /* OK */
-         icon_x  += (int)width - (int)(icon_size * 8) - (int)str_ok_width;
-
-         cursor_x = icon_x - (int)icon_size;
-         cursor_w = (int)(icon_size * 2 + str_ok_width);
-
-         if (     VIDEO_POS_X(rgui->pointer.pos) >= cursor_x
-               && VIDEO_POS_X(rgui->pointer.pos) <= cursor_x + cursor_w
-               && VIDEO_POS_Y(rgui->pointer.pos) >= cursor_y
-               && VIDEO_POS_Y(rgui->pointer.pos) <= cursor_y + cursor_h)
+         for (b = 0; b < buttons.count; b++)
          {
-            menu_st->dialog_st.confirm_hover_ok = true;
+            const char *str = msg_hash_to_str(
+                  (enum msg_hash_enums)buttons.label[b]);
+            int label_y     = rows_y
+                  + ((button_rows == 1) ? 0 : row_step * (int)b);
+            int cursor_y    = label_y - 2;
+            /* A button wider than the screen is lit where it shows */
+            int fill_x      = MAX(button_x[b], 0);
+            bool lit;
 
-            rgui_fill_rect(frame_buf_data, fb_dims,
-                  cursor_x,
-                  cursor_y,
-                  cursor_w,
-                  cursor_h,
-                  rgui->colors.bg_dark_color, rgui->colors.bg_light_color,
-                  (rgui->flags & RGUI_FLAG_BG_THICKNESS) ? true : false);
+            if (     VIDEO_POS_X(rgui->pointer.pos) >= button_x[b]
+                  && VIDEO_POS_X(rgui->pointer.pos) <= button_x[b] + button_w[b]
+                  && VIDEO_POS_Y(rgui->pointer.pos) >= cursor_y
+                  && VIDEO_POS_Y(rgui->pointer.pos) <= cursor_y + cursor_h)
+               hover = (int)b;
+
+            lit = ((int)b == buttons.highlight) || ((int)b == hover);
+            if (lit)
+               rgui_fill_rect(frame_buf_data, fb_dims,
+                     fill_x, cursor_y, button_w[b] - (fill_x - button_x[b]),
+                     cursor_h,
+                     rgui->colors.bg_dark_color, rgui->colors.bg_light_color,
+                     (rgui->flags & RGUI_FLAG_BG_THICKNESS) ? true : false);
+
+            rgui_blit_line(rgui, fb_width,
+                  button_x[b] + (int)rgui->font_width_stride, label_y, str,
+                  lit ? rgui->colors.hover_color : rgui->colors.normal_color,
+                  rgui->colors.shadow_color);
          }
-         else
-            menu_st->dialog_st.confirm_hover_ok = false;
 
-         rgui_blit_line(rgui, fb_width, icon_x, icon_y, str_ok,
-               (menu_st->dialog_st.confirm_hover_ok)
-                     ? rgui->colors.hover_color
-                     : rgui->colors.normal_color,
-               rgui->colors.shadow_color);
+         menu_dialog_set_hover(menu_st, hover);
       }
    }
 }
@@ -6140,14 +6195,17 @@ RGUI_NOINLINE static void rgui_media_subtitle_draw(rgui_t *rgui, unsigned dims)
       : (int)height - (int)rgui->font_height_stride;
    for (i = 0; i < count; i++)
    {
-      size_t glyphs = utf8len(lines[i]);
+      size_t len = utf8len(lines[i]);
+      unsigned glyphs;
       int x, y;
-      if (glyphs > columns)
+      if (len > columns)
       {
          char *end = (char*)utf8skip(lines[i], columns);
          *end = '\0';
          glyphs = columns;
       }
+      else
+         glyphs = (unsigned)len;
       x = (width - glyphs * rgui->font_width_stride) / 2;
       y = bottom - ((int)count - (int)i) * rgui->font_height_stride;
       if (y < (int)rgui->font_height_stride)
@@ -6285,10 +6343,21 @@ static void rgui_render(void *data, unsigned dims,
                                   = settings->bools.menu_rgui_particle_effect_screensaver;
    bool current_display_cb        = false;
    bool show_fs_thumbnail         = (rgui->flags & RGUI_FLAG_SHOW_FULLSCREEN_THUMBNAIL);
+   const char *msgbox             = NULL;
 
    /* Sanity check */
    if (!rgui || !rgui->frame_buf.data)
       return;
+
+   /* This iteration's box, if it has one; a box gone since it was
+    * drawn is painted over */
+   msgbox       = rgui->msgbox;
+   rgui->msgbox = NULL;
+   if (!msgbox && *rgui->msgbox_drawn)
+   {
+      rgui->msgbox_drawn[0] = '\0';
+      rgui->flags          |= RGUI_FLAG_FORCE_REDRAW;
+   }
 
    /* Show thumbnails only after certain period to prevent flashing */
    if (rgui->mini_thumbnail_delay > 0)
@@ -7121,13 +7190,17 @@ static void rgui_render(void *data, unsigned dims,
       menu_driver_media_startup_ready(menu_driver_media_startup_token());
    if (!show_fs_thumbnail)
       rgui_media_gpu_cutout(rgui, p_disp->framebuf_dims);
-   if (*rgui->msgbox)
+   if (msgbox && *msgbox)
    {
+      const menu_dialog_t *d = &menu_st->dialog_st;
       /* Draw popup directly on top of the menu; the messagebox
        * paints its own opaque background within its footprint. */
-      rgui_render_messagebox(rgui, rgui->msgbox, p_disp->framebuf_dims);
-      rgui->msgbox[0]    = '\0';
-      rgui->flags       |=  RGUI_FLAG_FORCE_REDRAW;
+      rgui_render_messagebox(rgui, msgbox, p_disp->framebuf_dims);
+      if (strcmp(rgui->msgbox_drawn, msgbox))
+         strlcpy(rgui->msgbox_drawn, msgbox, sizeof(rgui->msgbox_drawn));
+      rgui->msgbox_epoch     = d->button_epoch;
+      rgui->msgbox_highlight = d->button_highlight;
+      rgui->msgbox_hover     = rgui_msgbox_hover(d);
    }
 
    if (rgui->flags & RGUI_FLAG_SHOW_MOUSE)
@@ -7984,8 +8057,10 @@ static void rgui_free(void *data)
    rgui_buffers_free(rgui);
    rgui_upscale_buf_free(&rgui->upscale_buf);
    free(rgui->upscale_line);
-   rgui->upscale_line       = NULL;
-   rgui->upscale_line_width = 0;
+   rgui->upscale_line          = NULL;
+   rgui->upscale_line_width    = 0;
+   rgui->upscale_map_src_width = 0;
+   rgui->upscale_map_width     = 0;
 }
 
 static void rgui_set_texture_frame(video_driver_state_t *video_st,
@@ -7996,6 +8071,21 @@ static void rgui_set_texture_frame(video_driver_state_t *video_st,
          && video_st->poke->set_texture_frame)
       video_st->poke->set_texture_frame(video_st->data,
             frame, rgb32, dims, alpha);
+}
+
+RGUI_NOINLINE static void rgui_upscale_map(rgui_t *rgui,
+      unsigned fb_width, unsigned out_width)
+{
+   unsigned x_dst, x_src, rem;
+   uint16_t *cols = rgui->upscale_line;
+   for (x_dst = 0, x_src = 0, rem = 0; x_dst < out_width; x_dst++)
+   {
+      cols[x_dst] = (uint16_t)x_src;
+      for (rem += fb_width; rem >= out_width; rem -= out_width)
+         x_src++;
+   }
+   rgui->upscale_map_src_width = fb_width;
+   rgui->upscale_map_width     = out_width;
 }
 
 static void rgui_set_texture(void *data)
@@ -8049,7 +8139,7 @@ static void rgui_set_texture(void *data)
       {
          unsigned out_width;
          unsigned out_height;
-         unsigned x_src, y_src, prev_y_src, rem;
+         unsigned y_src, prev_y_src, rem;
          unsigned x_dst, y_dst;
          size_t out_pitch;
          uint16_t *cols, *line;
@@ -8119,12 +8209,9 @@ static void rgui_set_texture(void *data)
          /* Source of each output pixel: floor(dst * fb / out),
           * stepped, so at a whole factor each source pixel is
           * repeated exactly that many times */
-         for (x_dst = 0, x_src = 0, rem = 0; x_dst < out_width; x_dst++)
-         {
-            cols[x_dst] = (uint16_t)x_src;
-            for (rem += fb_width; rem >= out_width; rem -= out_width)
-               x_src++;
-         }
+         if (     rgui->upscale_map_src_width != fb_width
+               || rgui->upscale_map_width != out_width)
+            rgui_upscale_map(rgui, fb_width, out_width);
 
          for (y_dst = 0, y_src = 0, rem = 0; y_dst < out_height; y_dst++)
          {
@@ -9192,10 +9279,12 @@ static void rgui_media_gpu_draw(rgui_t *rgui, video_frame_info_t *video_info)
       menu_driver_media_startup_ready(startup_token);
    if (!view->visible || rect->w <= 0 || rect->h <= 0
          || !VIDEO_SCALE_W(view->source_dims) || !VIDEO_SCALE_H(view->source_dims)) return;
-   memset(&vp, 0, sizeof(vp));
+   vp.pos       = 0;
+   vp.dims      = 0;
+   vp.full_dims = 0;
    if (!video_driver_get_viewport_info(&vp)
          || !VIDEO_SCALE_W(vp.dims) || !VIDEO_SCALE_H(vp.dims))
-      vp.dims = dims;
+      vp.dims   = dims;
    if (video_st->current_video && video_st->current_video->set_viewport)
       video_st->current_video->set_viewport(
             video_st->data, dims, true, false);
@@ -9585,8 +9674,10 @@ static void rgui_toggle(void *userdata, bool menu_on)
          rgui->upscale_buf.data = NULL;
       }
       free(rgui->upscale_line);
-      rgui->upscale_line       = NULL;
-      rgui->upscale_line_width = 0;
+      rgui->upscale_line          = NULL;
+      rgui->upscale_line_width    = 0;
+      rgui->upscale_map_src_width = 0;
+      rgui->upscale_map_width     = 0;
    }
 }
 
@@ -9607,6 +9698,8 @@ static void rgui_context_reset(void *data, bool is_threaded)
    if (!disp_get_ptr()->dispctx)
       gfx_display_init_first_driver(disp_get_ptr(), is_threaded);
    video_driver_monitor_reset();
+   /* A new video driver holds no menu texture until the next upload */
+   disp_get_ptr()->flags |= GFX_DISP_FLAG_FB_DIRTY;
 }
 
 static void rgui_thumbnail_cycle_dupe(rgui_t *rgui)

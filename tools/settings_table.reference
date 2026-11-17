@@ -2,6 +2,7 @@
 bool	accessibility_enable	1	0
 bool	load_dummy_on_core_shutdown	1	1
 bool	core_info_cache_enable	1	0
+bool	core_firmware_notification_enable	1	1
 bool	core_set_supports_no_game_enable	1	1
 bool	builtin_mediaplayer_enable	1	0
 bool	builtin_imageviewer_enable	1	1
@@ -46,7 +47,9 @@ bool	video_waitable_swapchains	1	1
 bool	video_d3d9ex_present	1	0
 bool	video_threaded_present_repeat	1	0
 bool	video_threaded_display_pacing	1	0
+bool	video_threaded_pacing_vblank	1	0
 bool	video_present_timing_from_display	1	1
+bool	video_skip_dupe_frames	1	0
 bool	video_hard_sync	1	0
 bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
@@ -130,6 +133,7 @@ bool	audio_fastforward_speedup	1	0
 bool	audio_fastforward_callback	1	0
 bool	audio_rewind_mute	1	0
 bool	input_sensors_enable	1	1
+bool	menu_scroll_quick	1	1
 bool	ai_service_enable	1	0
 bool	ai_service_pause	1	0
 bool	video_scale_integer	1	0
@@ -175,6 +179,9 @@ bool	content_show_explore	1	1
 bool	xmb_entry_icons	1	1
 bool	xmb_switch_icons	1	1
 bool	xmb_shadows_enable	1	1
+bool	xmb_plastic_effect_enable	1	0
+bool	xmb_ribbon_bloom_enable	1	0
+bool	xmb_ribbon_particles_enable	1	0
 bool	playlist_show_entry_idx	1	1
 bool	playlist_fuzzy_archive_match	1	0
 bool	scan_without_core_match	1	0
@@ -206,6 +213,7 @@ bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
 bool	video_openxr_edit_pause	1	0
 bool	video_openxr_edit_snap	1	1
+bool	video_openxr_touch_passthrough	1	0
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -351,6 +359,7 @@ bool	settings_show_ai_service	1	1
 bool	settings_show_accessibility	1	1
 bool	settings_show_power_management	1	1
 bool	settings_show_achievements	1	1
+bool	settings_show_bluetooth	1	1
 bool	settings_show_network	1	1
 bool	settings_show_playlists	1	1
 bool	settings_show_user	1	1
@@ -576,6 +585,8 @@ uint	keyboard_gamepad_mapping_type	1	1
 uint	video_hdr_subpixel_layout	1	0
 uint	video_stereo_mode	1	0
 uint	video_screen_layout	1	0
+uint	video_menu_follows	1	0
+uint	video_notifications_window	1	0
 uint	video_openxr_refresh_rate	1	0
 uint	video_openxr_placement	1	0
 uint	video_openxr_controllers	1	0
@@ -584,6 +595,8 @@ uint	video_openxr_laser_beam	1	1
 uint	video_openxr_edit_snap_angles	1	1
 uint	video_openxr_edit_hinge_gap	1	2
 uint	video_openxr_edit_smoothing	1	2
+uint	video_openxr_touch_hands	1	0
+uint	video_openxr_touch_button	1	0
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE
@@ -733,6 +746,7 @@ size	rewind_buffer_size	1	(20 << 20)
 bool	accessibility_enable	1	0
 bool	load_dummy_on_core_shutdown	1	0
 bool	core_info_cache_enable	1	0
+bool	core_firmware_notification_enable	1	1
 bool	core_set_supports_no_game_enable	1	1
 bool	builtin_mediaplayer_enable	1	0
 bool	builtin_imageviewer_enable	1	1
@@ -777,7 +791,9 @@ bool	video_waitable_swapchains	1	1
 bool	video_d3d9ex_present	1	0
 bool	video_threaded_present_repeat	1	0
 bool	video_threaded_display_pacing	1	0
+bool	video_threaded_pacing_vblank	1	0
 bool	video_present_timing_from_display	1	1
+bool	video_skip_dupe_frames	1	0
 bool	video_hard_sync	1	0
 bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
@@ -861,6 +877,7 @@ bool	audio_fastforward_speedup	1	0
 bool	audio_fastforward_callback	1	0
 bool	audio_rewind_mute	1	0
 bool	input_sensors_enable	1	1
+bool	menu_scroll_quick	1	1
 bool	ai_service_enable	1	0
 bool	ai_service_pause	1	0
 bool	video_scale_integer	1	0
@@ -906,6 +923,9 @@ bool	content_show_explore	1	1
 bool	xmb_entry_icons	1	1
 bool	xmb_switch_icons	1	1
 bool	xmb_shadows_enable	1	1
+bool	xmb_plastic_effect_enable	1	0
+bool	xmb_ribbon_bloom_enable	1	0
+bool	xmb_ribbon_particles_enable	1	0
 bool	playlist_show_entry_idx	1	1
 bool	playlist_fuzzy_archive_match	1	0
 bool	scan_without_core_match	1	0
@@ -936,6 +956,7 @@ bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
 bool	video_openxr_edit_pause	1	0
 bool	video_openxr_edit_snap	1	1
+bool	video_openxr_touch_passthrough	1	0
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -1080,6 +1101,7 @@ bool	settings_show_ai_service	1	1
 bool	settings_show_accessibility	1	1
 bool	settings_show_power_management	1	1
 bool	settings_show_achievements	1	1
+bool	settings_show_bluetooth	1	1
 bool	settings_show_network	1	1
 bool	settings_show_playlists	1	1
 bool	settings_show_user	1	1
@@ -1309,6 +1331,8 @@ uint	video_openxr_laser_beam	1	1
 uint	video_openxr_edit_snap_angles	1	1
 uint	video_openxr_edit_hinge_gap	1	2
 uint	video_openxr_edit_smoothing	1	2
+uint	video_openxr_touch_hands	1	0
+uint	video_openxr_touch_button	1	0
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE
@@ -1453,6 +1477,7 @@ size	rewind_buffer_size	1	(20 << 20)
 bool	accessibility_enable	1	0
 bool	load_dummy_on_core_shutdown	1	1
 bool	core_info_cache_enable	1	0
+bool	core_firmware_notification_enable	1	1
 bool	core_set_supports_no_game_enable	1	1
 bool	builtin_mediaplayer_enable	1	0
 bool	builtin_imageviewer_enable	1	1
@@ -1499,7 +1524,9 @@ bool	video_waitable_swapchains	1	1
 bool	video_d3d9ex_present	1	0
 bool	video_threaded_present_repeat	1	0
 bool	video_threaded_display_pacing	1	0
+bool	video_threaded_pacing_vblank	1	0
 bool	video_present_timing_from_display	1	1
+bool	video_skip_dupe_frames	1	0
 bool	video_hard_sync	1	0
 bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
@@ -1583,6 +1610,7 @@ bool	audio_fastforward_speedup	1	0
 bool	audio_fastforward_callback	1	0
 bool	audio_rewind_mute	1	0
 bool	input_sensors_enable	1	1
+bool	menu_scroll_quick	1	1
 bool	ui_companion_enable	1	0
 bool	ui_companion_start_on_boot	1	1
 bool	desktop_menu_enable	1	1
@@ -1636,6 +1664,9 @@ bool	content_show_explore	1	1
 bool	xmb_entry_icons	1	1
 bool	xmb_switch_icons	1	1
 bool	xmb_shadows_enable	1	1
+bool	xmb_plastic_effect_enable	1	0
+bool	xmb_ribbon_bloom_enable	1	0
+bool	xmb_ribbon_particles_enable	1	0
 bool	playlist_show_entry_idx	1	1
 bool	playlist_fuzzy_archive_match	1	0
 bool	scan_without_core_match	1	0
@@ -1666,6 +1697,7 @@ bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
 bool	video_openxr_edit_pause	1	0
 bool	video_openxr_edit_snap	1	1
+bool	video_openxr_touch_passthrough	1	0
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -1811,6 +1843,7 @@ bool	settings_show_ai_service	1	1
 bool	settings_show_accessibility	1	1
 bool	settings_show_power_management	1	1
 bool	settings_show_achievements	1	1
+bool	settings_show_bluetooth	1	1
 bool	settings_show_network	1	1
 bool	settings_show_playlists	1	1
 bool	settings_show_user	1	1
@@ -2055,6 +2088,8 @@ uint	video_openxr_laser_beam	1	1
 uint	video_openxr_edit_snap_angles	1	1
 uint	video_openxr_edit_hinge_gap	1	2
 uint	video_openxr_edit_smoothing	1	2
+uint	video_openxr_touch_hands	1	0
+uint	video_openxr_touch_button	1	0
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE

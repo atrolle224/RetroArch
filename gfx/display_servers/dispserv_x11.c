@@ -39,6 +39,16 @@
 #include <X11/extensions/Xrender.h>
 #endif
 
+#ifdef HAVE_XCB
+/* The Present extension's vblank notifications, asked for with xcb's
+ * own request call: no libxcb-present to depend on */
+#include <sys/uio.h>
+#include <xcb/xcb.h>
+#include <xcb/xcbext.h>
+#include <features/features_cpu.h>
+#define X11_VBLANK_CLOCK
+#endif
+
 #include "../video_display_server.h"
 #include "../gfx_media_display.h"
 #include "../common/x11_common.h"
@@ -387,27 +397,6 @@ static bool x11_ml_find_mode(x11_modeline_t *ml, uint64_t xid,
    for (m = 0; m < resources->nmode; m++)
    {
       if (xid == resources->modes[m].id)
-      {
-         *out  = resources->modes[m];
-         found = true;
-         break;
-      }
-   }
-   XRRFreeScreenResources(resources);
-   return found;
-}
-
-static bool x11_ml_find_mode_by_name(x11_modeline_t *ml, const char *name,
-      XRRModeInfo *out)
-{
-   int m;
-   bool found = false;
-   XRRScreenResources *resources = XRRGetScreenResourcesCurrent(ml->dpy, ml->root);
-   if (!resources)
-      return false;
-   for (m = 0; m < resources->nmode; m++)
-   {
-      if (strcmp(resources->modes[m].name, name) == 0)
       {
          *out  = resources->modes[m];
          found = true;
@@ -1028,7 +1017,7 @@ static void x11_display_server_modeline_close(void *data)
 
 static unsigned x11_display_server_modeline_caps(void *data)
 {
-   return MODELINE_CAPS_ADD;
+   return MODELINE_CAPS_ADD | MODELINE_CAPS_CSYNC;
 }
 
 static int x11_display_server_modeline_enum(void *data,
@@ -1078,6 +1067,17 @@ static int x11_display_server_modeline_enum(void *data,
          mode->doublescan = (pxmode->modeFlags & RR_DoubleScan) ? 1 : 0;
          mode->hsync      = (pxmode->modeFlags & RR_HSyncPositive) ? 1 : 0;
          mode->vsync      = (pxmode->modeFlags & RR_VSyncPositive) ? 1 : 0;
+         if (pxmode->modeFlags & RR_CSync)
+         {
+            if ((pxmode->modeFlags & RR_CSyncNegative)
+                  && !(pxmode->modeFlags & RR_CSyncPositive))
+               mode->csync = MODELINE_CSYNC_NEGATIVE;
+            else if ((pxmode->modeFlags & RR_CSyncPositive)
+                  && !(pxmode->modeFlags & RR_CSyncNegative))
+               mode->csync = MODELINE_CSYNC_POSITIVE;
+            else
+               mode->csync = MODELINE_CSYNC_UNKNOWN;
+         }
          /* Whole hertz for the line rate, the label the list uses. A
           * virtual or headless server lists its mode with the timing
           * left at zero; the mode is real, its rate is unknown, and
@@ -1185,13 +1185,90 @@ static bool x11_display_server_modeline_delete(void *data,
    return total_xerrors == 0;
 }
 
+static unsigned long x11_ml_mode_flags(const video_modeline_t *mode)
+{
+   return (mode->interlace ? RR_Interlace : 0)
+      | (mode->doublescan ? RR_DoubleScan : 0)
+      | (mode->hsync ? RR_HSyncPositive : RR_HSyncNegative)
+      | (mode->vsync ? RR_VSyncPositive : RR_VSyncNegative)
+      | (mode->csync == MODELINE_CSYNC_NEGATIVE
+         ? RR_CSync | RR_CSyncNegative : 0)
+      | (mode->csync == MODELINE_CSYNC_POSITIVE
+         ? RR_CSync | RR_CSyncPositive : 0);
+}
+
+static bool x11_ml_mode_matches(const XRRModeInfo *existing,
+      const video_modeline_t *mode)
+{
+   return existing->dotClock == mode->pclock
+      && existing->width      == (unsigned int)mode->hactive
+      && existing->hSyncStart == (unsigned int)mode->hbegin
+      && existing->hSyncEnd   == (unsigned int)mode->hend
+      && existing->hTotal     == (unsigned int)mode->htotal
+      && existing->height     == (unsigned int)mode->vactive
+      && existing->vSyncStart == (unsigned int)mode->vbegin
+      && existing->vSyncEnd   == (unsigned int)mode->vend
+      && existing->vTotal     == (unsigned int)mode->vtotal
+      && existing->modeFlags  == x11_ml_mode_flags(mode);
+}
+
+/* A same-named mode is reused only when its timing is identical;
+ * otherwise the new one gets a suffix. *reuse is 0 for a new mode. */
+static bool x11_ml_pick_name(const XRRScreenResources *res,
+      const video_modeline_t *mode, char *name, size_t len, RRMode *reuse)
+{
+   int m, suffix;
+   char base[48];
+
+   snprintf(base, sizeof(base), "RA-%dx%d@%.02f%s%s",
+         mode->hactive, mode->vactive, mode->vfreq,
+         mode->interlace ? "i" : "",
+         mode->csync == MODELINE_CSYNC_NEGATIVE ? "-cn" :
+         mode->csync == MODELINE_CSYNC_POSITIVE ? "-cp" : "");
+
+   *reuse = 0;
+   for (suffix = 0; suffix < 100; suffix++)
+   {
+      if (!suffix)
+         strlcpy(name, base, len);
+      else
+         snprintf(name, len, "%s-%d", base, suffix);
+      for (m = 0; m < res->nmode; m++)
+         if (!strcmp(res->modes[m].name, name))
+            break;
+      if (m == res->nmode)
+         return true;
+      if (x11_ml_mode_matches(&res->modes[m], mode))
+      {
+         *reuse = res->modes[m].id;
+         return true;
+      }
+   }
+   return false;
+}
+
+static bool x11_ml_output_has_mode(x11_modeline_t *ml,
+      XRRScreenResources *res, RRMode id)
+{
+   int m;
+   bool found = false;
+   XRROutputInfo *oi = XRRGetOutputInfo(ml->dpy, res,
+         res->outputs[ml->desktop_output]);
+   if (!oi)
+      return false;
+   for (m = 0; m < oi->nmode && !found; m++)
+      found = (oi->modes[m] == id);
+   XRRFreeOutputInfo(oi);
+   return found;
+}
+
 static bool x11_display_server_modeline_add(void *data,
       video_modeline_t *mode)
 {
-   char name[48];
+   char name[64];
    XRRModeInfo xmode;
    XRRModeInfo found;
-   RRMode gmid;
+   RRMode reuse;
    XRRScreenResources *resources;
    dispserv_x11_t *dispserv = (dispserv_x11_t*)data;
    x11_modeline_t *ml       = &dispserv->ml;
@@ -1204,57 +1281,68 @@ static bool x11_display_server_modeline_add(void *data,
       return false;
    }
 
-   if (x11_ml_find_mode(ml, mode->platform_data, &found))
+   if (mode->platform_data
+         && x11_ml_find_mode(ml, mode->platform_data, &found)
+         && x11_ml_mode_matches(&found, mode))
    {
       RARCH_DBG("[XRandR] Mode already exists\n");
       return true;
    }
 
-   snprintf(name, sizeof(name), "RA-%dx%d@%.02f%s", mode->hactive,
-         mode->vactive, mode->vfreq, mode->interlace ? "i" : "");
-
-   if (x11_ml_find_mode_by_name(ml, name, &found))
-   {
-      RARCH_DBG("[XRandR] Mode already exists (duplicate request)\n");
-      mode->platform_data = found.id;
-      return true;
-   }
-
-   RARCH_DBG("[XRandR] Create mode %s\n", name);
-
-   memset(&xmode, 0, sizeof(xmode));
-   xmode.name       = name;
-   xmode.nameLength = strlen(name);
-   xmode.dotClock   = mode->pclock;
-   xmode.width      = mode->hactive;
-   xmode.hSyncStart = mode->hbegin;
-   xmode.hSyncEnd   = mode->hend;
-   xmode.hTotal     = mode->htotal;
-   xmode.height     = mode->vactive;
-   xmode.vSyncStart = mode->vbegin;
-   xmode.vSyncEnd   = mode->vend;
-   xmode.vTotal     = mode->vtotal;
-   xmode.modeFlags  = (mode->interlace ? RR_Interlace : 0)
-      | (mode->doublescan ? RR_DoubleScan : 0)
-      | (mode->hsync ? RR_HSyncPositive : RR_HSyncNegative)
-      | (mode->vsync ? RR_VSyncPositive : RR_VSyncNegative);
-   xmode.hSkew      = 0;
-   mode->type      |= MODELINE_TIMING_XRANDR;
-
-   ml->xerrors = 0;
-   x11_ml_trap(ml, 0x01);
-   gmid = XRRCreateMode(ml->dpy, ml->root, &xmode);
-   x11_ml_untrap(ml);
-   if (ml->xerrors & ml->xerrors_flag)
-   {
-      RARCH_ERR("[XRandR] Error in XRRCreateMode\n");
-      return false;
-   }
-   mode->platform_data = gmid;
-
    resources = XRRGetScreenResourcesCurrent(ml->dpy, ml->root);
    if (!resources)
       return false;
+   if (!x11_ml_pick_name(resources, mode, name, sizeof(name), &reuse))
+   {
+      RARCH_ERR("[XRandR] No unused mode name for %s\n", name);
+      XRRFreeScreenResources(resources);
+      return false;
+   }
+   mode->type |= MODELINE_TIMING_XRANDR;
+
+   if (reuse)
+   {
+      RARCH_DBG("[XRandR] Reuse mode %s\n", name);
+      mode->platform_data = reuse;
+      if (x11_ml_output_has_mode(ml, resources, reuse))
+      {
+         XRRFreeScreenResources(resources);
+         return true;
+      }
+   }
+   else
+   {
+      RARCH_DBG("[XRandR] Create mode %s\n", name);
+
+      memset(&xmode, 0, sizeof(xmode));
+      xmode.name       = name;
+      xmode.nameLength = (unsigned)strlen(name);
+      xmode.dotClock   = mode->pclock;
+      xmode.width      = mode->hactive;
+      xmode.hSyncStart = mode->hbegin;
+      xmode.hSyncEnd   = mode->hend;
+      xmode.hTotal     = mode->htotal;
+      xmode.height     = mode->vactive;
+      xmode.vSyncStart = mode->vbegin;
+      xmode.vSyncEnd   = mode->vend;
+      xmode.vTotal     = mode->vtotal;
+      xmode.modeFlags  = x11_ml_mode_flags(mode);
+      xmode.hSkew      = 0;
+
+      ml->xerrors = 0;
+      x11_ml_trap(ml, 0x01);
+      mode->platform_data = XRRCreateMode(ml->dpy, ml->root, &xmode);
+      x11_ml_untrap(ml);
+      if (ml->xerrors & ml->xerrors_flag)
+      {
+         RARCH_ERR("[XRandR] Error in XRRCreateMode\n");
+         mode->platform_data = 0;
+         XRRFreeScreenResources(resources);
+         return false;
+      }
+   }
+
+   ml->xerrors = 0;
    x11_ml_trap(ml, 0x02);
    XRRAddOutputMode(ml->dpy, resources->outputs[ml->desktop_output],
          (RRMode)mode->platform_data);
@@ -1264,20 +1352,20 @@ static bool x11_display_server_modeline_add(void *data,
    if (ml->xerrors & ml->xerrors_flag)
    {
       RARCH_ERR("[XRandR] Error in XRRAddOutputMode\n");
-      if (mode->platform_data)
+      if (!reuse)
       {
          RARCH_ERR("[XRandR] Remove mode [%04llx]\n",
                (unsigned long long)mode->platform_data);
          XRRDestroyMode(ml->dpy, (RRMode)mode->platform_data);
-         mode->platform_data = 0;
       }
+      mode->platform_data = 0;
+      return false;
    }
-   else
-      RARCH_DBG("[XRandR] Mode %04llx %dx%d refresh %.6f added\n",
-            (unsigned long long)mode->platform_data, mode->hactive,
-            mode->vactive, mode->vfreq);
 
-   return ml->xerrors == 0;
+   RARCH_DBG("[XRandR] Mode %04llx %dx%d refresh %.6f added\n",
+         (unsigned long long)mode->platform_data, mode->hactive,
+         mode->vactive, mode->vfreq);
+   return true;
 }
 
 static bool x11_display_server_modeline_update(void *data,
@@ -2039,6 +2127,216 @@ done:
 
 #endif /* HAVE_XRANDR */
 
+#ifdef X11_VBLANK_CLOCK
+/* The vblanks of the CRTC the window is on, from Present: a
+ * NotifyMSC asked for the count after the last one seen is answered
+ * as that vblank happens, with its count and its time on the
+ * monotonic clock. On a connection of its own, so a wait is a poll of
+ * its socket and no other thread's events are read. One caller. */
+#define X11_PRESENT_NOTIFY_MSC      2
+#define X11_PRESENT_SELECT_INPUT    3
+#define X11_PRESENT_COMPLETE_NOTIFY 1
+#define X11_PRESENT_COMPLETE_MASK   2
+#define X11_PRESENT_KIND_MSC        1
+#define X11_GENERIC_EVENT           35
+/* A stamp further than this from now is of another clock */
+#define X11_VBLANK_CLOCK_SLACK      5000000
+
+static xcb_extension_t   x11_vblank_ext = { "Present", 0 };
+static xcb_connection_t *x11_vblank_conn;
+static uint32_t          x11_vblank_window; /* asked about */
+static uint32_t          x11_vblank_refused; /* and one that cannot be */
+static uint32_t          x11_vblank_eid;
+static uint8_t           x11_vblank_opcode;
+static bool              x11_vblank_known;
+static bool              x11_vblank_queued;
+static uint64_t          x11_vblank_msc;
+static int64_t           x11_vblank_ust;
+
+static void x11_vblank_close(void)
+{
+   if (x11_vblank_conn)
+      xcb_disconnect(x11_vblank_conn);
+   x11_vblank_conn   = NULL;
+   x11_vblank_window = 0;
+   x11_vblank_known  = false;
+   x11_vblank_queued = false;
+}
+
+/* xcb fills in the four bytes every request starts with, and wants
+ * two vectors of its own ahead of the request's */
+static void x11_vblank_send(int minor, void *request, size_t len)
+{
+   struct iovec vec[3];
+   xcb_protocol_request_t req;
+   req.count         = 1;
+   req.ext           = &x11_vblank_ext;
+   req.opcode        = (uint8_t)minor;
+   req.isvoid        = 1;
+   vec[2].iov_base   = request;
+   vec[2].iov_len    = len;
+   xcb_send_request(x11_vblank_conn, 0, &vec[2], &req);
+}
+
+static bool x11_vblank_open(Display *dpy, uint32_t window)
+{
+   const xcb_query_extension_reply_t *ext;
+   struct { uint32_t header, eid, window, mask; } select;
+   uint32_t structure = XCB_EVENT_MASK_STRUCTURE_NOTIFY;
+
+   if (x11_vblank_conn && x11_vblank_window == window)
+      return true;
+   x11_vblank_close();
+   if (window == x11_vblank_refused)
+      return false;
+   x11_vblank_refused = window;
+
+   x11_vblank_conn = xcb_connect(DisplayString(dpy), NULL);
+   if (xcb_connection_has_error(x11_vblank_conn))
+      goto error;
+   ext = xcb_get_extension_data(x11_vblank_conn, &x11_vblank_ext);
+   if (!ext || !ext->present)
+      goto error;
+   x11_vblank_opcode = ext->major_opcode;
+   x11_vblank_eid    = xcb_generate_id(x11_vblank_conn);
+   select.header     = 0;
+   select.eid        = x11_vblank_eid;
+   select.window     = window;
+   select.mask       = X11_PRESENT_COMPLETE_MASK;
+   x11_vblank_send(X11_PRESENT_SELECT_INPUT, &select, sizeof(select));
+   /* a destroyed window's notifications are dropped unanswered */
+   xcb_change_window_attributes(x11_vblank_conn, window,
+         XCB_CW_EVENT_MASK, &structure);
+   x11_vblank_window  = window;
+   x11_vblank_refused = 0;
+   return true;
+error:
+   x11_vblank_close();
+   return false;
+}
+
+/* What has arrived; false once the connection or the window is no
+ * good, with the clock closed. */
+static bool x11_vblank_drain(void)
+{
+   xcb_generic_event_t *ev;
+   while ((ev = xcb_poll_for_event(x11_vblank_conn)))
+   {
+      const uint8_t *b = (const uint8_t*)ev;
+      uint8_t type     = ev->response_type & 0x7f;
+      if (!type || type == XCB_DESTROY_NOTIFY)
+      {
+         /* or an error: the window is gone, or not one to ask about */
+         uint32_t window = x11_vblank_window;
+         free(ev);
+         x11_vblank_close();
+         x11_vblank_refused = window;
+         return false;
+      }
+      if (type == X11_GENERIC_EVENT && b[1] == x11_vblank_opcode)
+      {
+         uint16_t evtype;
+         uint32_t eid;
+         memcpy(&evtype, b + 8, sizeof(evtype));
+         memcpy(&eid, b + 12, sizeof(eid));
+         if (     evtype == X11_PRESENT_COMPLETE_NOTIFY
+               && b[10]  == X11_PRESENT_KIND_MSC
+               && eid    == x11_vblank_eid)
+         {
+            /* past the 32 bytes of an event xcb puts its own full
+             * sequence number, and the rest after that */
+            memcpy(&x11_vblank_ust, b + 24, sizeof(x11_vblank_ust));
+            memcpy(&x11_vblank_msc, b + 36, sizeof(x11_vblank_msc));
+            x11_vblank_known  = true;
+            x11_vblank_queued = false;
+         }
+      }
+      free(ev);
+   }
+   if (xcb_connection_has_error(x11_vblank_conn))
+   {
+      x11_vblank_close();
+      return false;
+   }
+   return true;
+}
+
+/* The vblank after the last one seen, or where things stand now */
+static void x11_vblank_ask(void)
+{
+   struct
+   {
+      uint32_t header, window, serial, pad;
+      uint64_t target_msc, divisor, remainder;
+   } notify;
+   if (x11_vblank_queued)
+      return;
+   notify.header     = 0;
+   notify.window     = x11_vblank_window;
+   notify.serial     = 0;
+   notify.pad        = 0;
+   notify.target_msc = x11_vblank_known ? x11_vblank_msc + 1 : 0;
+   notify.divisor    = 0;
+   notify.remainder  = 0;
+   x11_vblank_send(X11_PRESENT_NOTIFY_MSC, &notify, sizeof(notify));
+   xcb_flush(x11_vblank_conn);
+   x11_vblank_queued = true;
+}
+
+static unsigned x11_display_server_wait_vblank(void *data, unsigned seen,
+      unsigned timeout_us, retro_time_t *at)
+{
+   retro_time_t now, deadline;
+   uint64_t before;
+   bool known;
+
+   if (     !g_x11_dpy || !g_x11_win
+         || !x11_vblank_open(g_x11_dpy, (uint32_t)g_x11_win)
+         || !x11_vblank_drain())
+      return 0;
+   x11_vblank_ask();
+
+   known    = x11_vblank_known;
+   before   = x11_vblank_msc;
+   now      = cpu_features_get_time_usec();
+   deadline = now + timeout_us;
+   /* nothing known yet, or nothing new: until the answer or the time */
+   while (  timeout_us
+         && (     !x11_vblank_known
+               || (     x11_vblank_msc == before
+                     && ((unsigned)before ? (unsigned)before : 1) == seen))
+         && now < deadline)
+   {
+      struct pollfd pfd;
+      pfd.fd      = xcb_get_file_descriptor(x11_vblank_conn);
+      pfd.events  = POLLIN;
+      pfd.revents = 0;
+      if (poll(&pfd, 1, (int)((deadline - now + 999) / 1000)) < 0)
+         break;
+      if (!x11_vblank_drain())
+         return 0;
+      now = cpu_features_get_time_usec();
+   }
+   if (!x11_vblank_known)
+      return 0;
+   /* the next is asked for as each arrives, so one that comes while
+    * nobody waits is there to be read */
+   x11_vblank_ask();
+   /* the first answer says whether the stamps are of this clock */
+   if (     !known
+         && (     x11_vblank_ust > now + X11_VBLANK_CLOCK_SLACK
+               || x11_vblank_ust < now - X11_VBLANK_CLOCK_SLACK))
+   {
+      uint32_t window    = x11_vblank_window;
+      x11_vblank_close();
+      x11_vblank_refused = window;
+      return 0;
+   }
+   *at = (retro_time_t)x11_vblank_ust;
+   return (unsigned)x11_vblank_msc ? (unsigned)x11_vblank_msc : 1;
+}
+#endif
+
 static void* x11_display_server_init(void)
 {
    dispserv_x11_t *dispserv = (dispserv_x11_t*)calloc(1, sizeof(*dispserv));
@@ -2054,6 +2352,9 @@ static void x11_display_server_destroy(void *data)
 
    if (!dispserv)
       return;
+#ifdef X11_VBLANK_CLOCK
+   x11_vblank_close();
+#endif
 #ifdef HAVE_XRANDR
    x11_display_server_modeline_close(dispserv);
 #endif
@@ -2772,7 +3073,11 @@ const video_display_server_t dispserv_x11 = {
    x11_get_metrics,
    x11_display_server_get_flags,
    NULL, /* get_scanline */
+#ifdef X11_VBLANK_CLOCK
+   x11_display_server_wait_vblank,
+#else
    NULL, /* wait_vblank */
+#endif
 #ifdef HAVE_XRANDR
    x11_display_server_modeline_list_outputs,
    x11_display_server_modeline_open,

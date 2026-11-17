@@ -1526,6 +1526,7 @@ static const struct
    char s_9329c64c[8];
    char s_f8883f70[12];
    char s_09ba892e[9];
+   char s_047623ff[9];
    char s_58b9d895[14];
    char s_0a2aa953[9];
    char s_ffd0dac4[13];
@@ -2003,6 +2004,8 @@ static const struct
    char s_9eb59c3e[15];
    char s_34b2592a[15];
    char s_c7a27b20[14];
+   char s_d65a7d95[9];
+   char s_d6611158[12];
    char s_317b17ed[8];
    char s_94c8d15f[8];
    char s_de16b5d2[9];
@@ -2080,6 +2083,7 @@ static const struct
    char s_8f379310[34];
    char s_6a9b757c[25];
    char s_6c52dfb1[35];
+   char s_334daaaa[14];
 #if defined (WIIU)
 #ifdef WIIU
    char s_afb881f7[60];
@@ -2203,7 +2207,6 @@ static const struct
 #ifdef HAVE_LAKKA
    char s_2bab34b2[29];
 #endif
-   char s_27aef25c[41];
 #ifdef _3DS
    char s_2873cef1[85];
    char s_b4816da6[51];
@@ -5082,6 +5085,7 @@ static const struct
    "Pisteet",
    "Sarjanumero",
    "Asetelma",
+   "Tunniste",
    "TGDB-luokitus",
    "Ajoneuvo",
    "Visuaalisuus",
@@ -5561,6 +5565,8 @@ static const struct
    "Ei k\303\244yt\303\266ss\303\244",
    "Ei k\303\244yt\303\266ss\303\244",
    "Automaattinen",
+   "Molemmat",
+   "Ei mit\303\244\303\244n",
    "180 as.",
    "270 as.",
    "Normaali",
@@ -5638,6 +5644,7 @@ static const struct
    "Mukautettu kuvasuhde (Y-sijainti)",
    "Aseta Vi n\303\244yt\303\266n leveys",
    "Vertikaalinen synkronointi (VSync)",
+   "J\303\244rjestelm\303\244",
 #if defined (WIIU)
 #ifdef WIIU
    "Optimoi Wii U GamePad:ille (uudelleenk\303\244ynnistys vaaditaan)",
@@ -5791,7 +5798,6 @@ static const struct
 #ifdef HAVE_LAKKA
    "M\303\244\303\244rit\303\244 bluetoothin tila.",
 #endif
-   "Etsi bluetooth laitteita ja yhdist\303\244 ne.",
 #ifdef _3DS
    "Alemman n\303\244yt\303\266n resurssien kansio. Kansioon on sis\303\244llytett\303\244v\303\244 "
    "\"bottom_menu.png\".",
@@ -7574,7 +7580,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_fi_blob_check[
-      (sizeof(msg_hash_fi_blob) == (123435u
+      (sizeof(msg_hash_fi_blob) == (123438u
 #ifdef HAVE_LAKKA
        + 257u
 #endif
@@ -9425,6 +9431,7 @@ static const msg_hash_id_t msg_hash_fi_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SCORE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SERIAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SETTING,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TAGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TGDB_RATING,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VEHICULAR,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VISUAL,
@@ -9902,6 +9909,8 @@ static const msg_hash_id_t msg_hash_fi_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_BOTH,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_NONE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED_ROTATED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_NORMAL,
@@ -9979,6 +9988,7 @@ static const msg_hash_id_t msg_hash_fi_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VI_WIDTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VSYNC,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM,
 #if defined (WIIU)
 #ifdef WIIU
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WIIU_PREFER_DRC,
@@ -10102,7 +10112,6 @@ static const msg_hash_id_t msg_hash_fi_ids[] =
 #ifdef HAVE_LAKKA
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_ENABLE,
 #endif
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_SETTINGS,
 #ifdef _3DS
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_ASSETS_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_FONT_COLOR_BLUE,

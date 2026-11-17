@@ -47,6 +47,9 @@
 
 #ifdef HAVE_MENU
 #include "menu/menu_driver.h"
+#ifdef HAVE_CORE_SIGNATURES
+#include "core_trust_runtime.h"
+#endif
 #endif
 
 #ifdef HAVE_NETWORKING
@@ -54,6 +57,7 @@
 #endif
 
 #include "audio/audio_driver.h"
+#include "input/input_remapping.h"
 #if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
 #include "gfx/video_shader_parse.h"
 #endif
@@ -77,6 +81,9 @@
 #include "version.h"
 #include "version_git.h"
 #include "tasks/task_content.h"
+#ifdef HAVE_CORE_LOAD_CHECK
+#include "core_load_check.h"
+#endif
 #ifdef HAVE_TRANSLATE
 #include "accessibility.h"
 #endif
@@ -282,7 +289,7 @@ static void network_command_reply(command_t *cmd,
 {
    command_network_t *netcmd = (command_network_t*)cmd->userptr;
    /* Respond (fire and forget since it's UDP) */
-   sendto(netcmd->net_fd, s, len, 0,
+   sendto(netcmd->net_fd, s, (int)len, 0,
       (struct sockaddr*)&netcmd->cmd_source, netcmd->cmd_source_len);
 }
 
@@ -310,7 +317,7 @@ static void network_command_reply_to(command_t *cmd, void *data,
 {
    command_network_t      *netcmd = (command_network_t*)cmd->userptr;
    command_network_dest_t *dest   = (command_network_dest_t*)data;
-   sendto(netcmd->net_fd, s, len, 0,
+   sendto(netcmd->net_fd, s, (int)len, 0,
       (struct sockaddr*)&dest->addr, dest->addr_len);
 }
 
@@ -1331,6 +1338,9 @@ static struct
    bool               has_index;
    bool               has_from;
    bool               lost;
+#ifdef HAVE_CORE_SIGNATURES
+   bool               refused;
+#endif
    /* the list the index was given in: how deep, and its label */
    size_t             depth;
    char               list[64];
@@ -1456,10 +1466,10 @@ static char *command_menu_answer(bool has_from, unsigned from,
       _len += (size_t)snprintf(out + _len, size - _len, "KEYBOARD %s\n",
             label);
    }
-   else if (menu_st->driver_data && *menu_st->driver_data->menu_state_msg)
+   else if (menu_st->driver_data && *MENU_STATE_TEXT(menu_st->driver_data))
    {
       char msg[sizeof(menu_st->driver_data->menu_state_msg)];
-      strlcpy(msg, menu_st->driver_data->menu_state_msg, sizeof(msg));
+      strlcpy(msg, MENU_STATE_TEXT(menu_st->driver_data), sizeof(msg));
       command_menu_clean(msg);
       _len += (size_t)snprintf(out + _len, size - _len, "MESSAGE %s\n",
             msg);
@@ -1505,6 +1515,14 @@ unsigned command_menu_action(unsigned action)
    char               where[sizeof(command_menu_st.list)];
    if (!command_menu_st.pending || command_menu_st.frames < 2)
       return action;
+#ifdef HAVE_CORE_SIGNATURES
+   if (menu_core_warning_user_only())
+   {
+      command_menu_st.has_index = false;
+      command_menu_st.refused   = true;
+      return action;
+   }
+#endif
    /* a request is input, as a press is: no screensaver comes over it,
     * and one up takes the press that ends it */
    menu_st->input_last_time_us = menu_st->current_time_us;
@@ -1560,6 +1578,17 @@ void command_menu_iterated(void)
          && (menu_state_get_ptr()->flags & MENU_ST_FLAG_ALIVE))
       return;
    command_menu_st.pending = false;
+#ifdef HAVE_CORE_SIGNATURES
+   if (command_menu_st.refused)
+   {
+      command_menu_st.refused = false;
+      command_deferred_send(&command_menu_st.deferred,
+            "MENU ERROR only the user can answer this screen\n",
+            STRLEN_CONST("MENU ERROR only the user can answer this "
+               "screen\n"), true);
+      return;
+   }
+#endif
    if (command_menu_st.lost)
    {
       command_menu_st.lost = false;
@@ -1752,6 +1781,9 @@ bool command_menu(command_t *cmd, const char *arg)
    command_menu_st.depth     = command_menu_where(command_menu_st.list,
          sizeof(command_menu_st.list));
    command_menu_st.lost      = false;
+#ifdef HAVE_CORE_SIGNATURES
+   command_menu_st.refused   = false;
+#endif
    command_menu_st.frames    = 2;
    command_menu_st.pending   = true;
    command_deferred_take(&command_menu_st.deferred, cmd);
@@ -1917,13 +1949,13 @@ static bool udp_send_packet(const char *host, uint16_t port, const char *msg)
 
    do
    {
-      int fd = socket(tmp_info->ai_family,
+      int fd = (int)socket(tmp_info->ai_family,
          tmp_info->ai_socktype, tmp_info->ai_protocol);
 
       if (fd < 0)
          continue;
 
-      if (sendto(fd, msg, len, 0, tmp_info->ai_addr, tmp_info->ai_addrlen) ==
+      if (sendto(fd, msg, (int)len, 0, tmp_info->ai_addr, (socklen_t)tmp_info->ai_addrlen) ==
             (ssize_t)len)
          ret = true;
 
@@ -1996,9 +2028,14 @@ bool command_network_send(const char *cmd_)
 
    if (port_str && *port_str)
    {
-      unsigned long val = strtoul(port_str, NULL, 0);
-      if (val > 0 && val <= 0xFFFF)
-         port = (uint16_t)val;
+      char *end;
+      unsigned long val = strtoul(port_str, &end, 0);
+      if (*end || !val || val > 0xFFFF)
+      {
+         RARCH_ERR("[NetCMD] Invalid port \"%s\".\n", port_str);
+         return false;
+      }
+      port = (uint16_t)val;
    }
 
    RARCH_LOG("[NetCMD] %s: \"%s\" to %s:%hu.\n",
@@ -5488,6 +5525,11 @@ static bool command_core_at(command_t *cmd, const char *name,
    }
    if (!libretro_get_system_info(path, &info, NULL))
    {
+#ifdef HAVE_CORE_LOAD_CHECK
+      /* A core its check holds back: the load after this parks it */
+      if (core_load_check_refused(path))
+         return true;
+#endif
       command_reply_error(cmd, name, "%s is not a libretro core", path);
       return false;
    }
@@ -5521,6 +5563,10 @@ bool command_load_core(command_t *cmd, const char* arg)
    if (!task_push_load_new_core(path, NULL,
             &content_info, CORE_TYPE_PLAIN, NULL, NULL))
    {
+#ifdef HAVE_CORE_LOAD_CHECK
+      if (task_content_park_core_load(path))
+         return true;
+#endif
       command_reply_error(cmd, "LOAD_CORE", "could not load %s", path);
       return false;
    }
@@ -6313,7 +6359,7 @@ void command_event_init_controllers(rarch_system_info_t *sys_info,
          if (i >= MAX_USERS)
             break;
 
-         if (port == settings->uints.input_remap_ports[i])
+         if (port == input_remapping_user_port((unsigned)i))
          {
             device = input_config_get_device(port);
             break;
@@ -7402,10 +7448,11 @@ bool command_event_main_state(unsigned cmd)
                      settings->uints.savestate_max_keep;
                bool frame_time_counter_auto_reset             =
                      settings->bools.frame_time_counter_auto_reset;
+               bool queued                                    = true;
 
                if (cmd == CMD_EVENT_SAVE_STATE)
                {
-                  bool queued = content_save_state(state_path, true);
+                  queued = content_save_state(state_path, true);
                   RARCH_LOG("[State] Save dispatch for slot %d, path "
                         "\"%s\": content_save_state queued=%s "
                         "(auto_index=%s, max_keep=%u). NOTE: actual disk "
@@ -7415,18 +7462,29 @@ bool command_event_main_state(unsigned cmd)
                         queued ? "yes" : "NO",
                         savestate_auto_index ? "on" : "off",
                         savestate_max_keep);
+                  /* Turned away - the saves and loads held behind the
+                   * one in flight are already at their bound: said,
+                   * rather than the hotkey doing nothing */
+                  if (!queued)
+                     _len = snprintf(msg, sizeof(msg), "%s \"%s\".",
+                           msg_hash_to_str(MSG_FAILED_TO_SAVE_STATE_TO),
+                           path_basename(state_path));
                }
                else
                   content_save_state_to_ram();
 
-               /* Clean up excess savestates if necessary */
-               if (savestate_auto_index && (savestate_max_keep > 0))
+               /* Clean up excess savestates if necessary: not for a
+                * save that was turned away, which wrote nothing */
+               if (     queued
+                     && savestate_auto_index && (savestate_max_keep > 0))
                   command_event_set_savestate_garbage_collect(settings);
 
                if (frame_time_counter_auto_reset)
                   video_st->frame_time_count = 0;
 
-               ret      = true;
+               /* false for a save turned away, so the caller can take
+                * back the slot it advanced for it */
+               ret      = queued;
             }
             break;
          case CMD_EVENT_LOAD_STATE:
@@ -7443,6 +7501,12 @@ bool command_event_main_state(unsigned cmd)
                   command_post_state_loaded();
                   ret = true;
                }
+               /* Turned away (the hold behind the state task in flight
+                * is full) or not begun: said, rather than nothing */
+               else if (cmd == CMD_EVENT_LOAD_STATE)
+                  _len = strlcpy(msg,
+                        msg_hash_to_str(MSG_FAILED_TO_LOAD_STATE),
+                        sizeof(msg));
             }
             break;
         case CMD_EVENT_UNDO_LOAD_STATE:
@@ -7545,7 +7609,8 @@ static void command_reinit_snapshot_cb(void *userdata,
    if (!*ctx->buf_p)
       return;
 
-   memcpy(*ctx->buf_p, data, want);
+   if (*ctx->buf_p != data)
+      memcpy(*ctx->buf_p, data, want);
    ctx->dims = dims;
    ctx->p    = pitch;
    ctx->size = want;
@@ -7624,6 +7689,7 @@ bool command_event_reinit(const int flags)
 
 
 
+   if (flags & DRIVER_VIDEO_AND_INPUT_MASK)
    {
       struct command_reinit_snapshot_ctx ctx;
       ctx.buf_p = &cached_snapshot;

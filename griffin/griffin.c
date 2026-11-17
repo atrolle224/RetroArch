@@ -229,18 +229,16 @@ ACHIEVEMENTS
 #define RC_CLIENT_SUPPORTS_HASH 1
 
 #include "../libretro-common/formats/cdfs/cdfs.c"
+#include "../libretro-common/streams/cdfs_file.c"
 
 #include "../cheevos/cheevos.c"
 #include "../cheevos/cheevos_client.c"
 #include "../cheevos/cheevos_menu.c"
 #include "../cheevos/cheevos_badge.c"
+#include "../cheevos/cheevos_ciso.c"
 
 #if defined(HAVE_CHEEVOS_RVZ) && defined(HAVE_RZSTD)
 #include "../libretro-common/formats/rvz/rvz.c"
-#ifndef HAVE_CRYPTO
-/* its AES, without the rest of the crypto library */
-#include "../libretro-common/crypto/crypto.c"
-#endif
 #ifndef HAVE_7ZIP
 /* its LZMA and LZMA2, without the 7z backend */
 #include "../libretro-common/formats/7z/r7z_lzma_stream.c"
@@ -269,12 +267,13 @@ ACHIEVEMENTS
 #include "../deps/rcheevos/src/rcheevos/runtime_progress.c"
 #include "../deps/rcheevos/src/rcheevos/trigger.c"
 #include "../deps/rcheevos/src/rcheevos/value.c"
-/* the hashes' AES: the crypto library's wherever it is built */
-#if defined(HAVE_CRYPTO) || (defined(HAVE_CHEEVOS_RVZ) && defined(HAVE_RZSTD))
-#include "../cheevos/cheevos_aes.c"
-#else
-#include "../deps/rcheevos/src/rhash/aes.c"
+#ifndef HAVE_CRYPTO
+#ifndef CRYPTO_AES_ONLY
+#define CRYPTO_AES_ONLY
 #endif
+#include "../libretro-common/crypto/crypto.c"
+#endif
+#include "../cheevos/cheevos_aes.c"
 #include "../deps/rcheevos/src/rhash/cdreader.c"
 #include "../deps/rcheevos/src/rhash/hash.c"
 #include "../deps/rcheevos/src/rhash/hash_rom.c"
@@ -360,6 +359,11 @@ VIDEO CONTEXT
 #endif
 #if defined(HAVE_VULKAN)
 #include "../gfx/drivers_context/android_vk_ctx.c"
+#if defined(HAVE_VULKAN_CUSTOM_DRIVER)
+#include "../gfx/common/vulkan_custom_driver.c"
+#include "../gfx/common/vulkan_custom_driver_android.c"
+#include "../gfx/common/vulkan_custom_driver_linker.c"
+#endif
 #if defined(HAVE_OPENXR)
 #include "../gfx/drivers_context/android_vk_openxr_ctx.c"
 #endif
@@ -434,6 +438,7 @@ VIDEO CONTEXT
 #include "../record/record_android_capture_device.c"
 #endif
 #include "../gfx/common/vulkan_common.c"
+#include "../gfx/common/vulkan_encode_device.c"
 #include "../libretro-common/vulkan/vulkan_symbol_wrapper.c"
 #ifdef HAVE_RMP4
 #include "../gfx/common/vulkan_video_decode.c"
@@ -569,12 +574,16 @@ VIDEO IMAGE
 ============================================================ */
 
 #include "../libretro-common/formats/image_texture.c"
+#include "../libretro-common/streams/image_texture_file.c"
 #include "../libretro-common/formats/image/image_yuv_blit.c"
 #include "../libretro-common/formats/image_texture_scale.c"
 #include "../libretro-common/formats/image_texture_set.c"
 
 #ifdef HAVE_RTGA
 #include "../libretro-common/formats/tga/rtga.c"
+#endif
+#ifdef HAVE_RGIF
+#include "../libretro-common/formats/gif/rgif.c"
 #endif
 
 #ifdef HAVE_IMAGEVIEWER
@@ -604,6 +613,7 @@ VIDEO IMAGE
 #include "../libretro-common/formats/image_transfer.c"
 #include "../libretro-common/formats/video_player.c"
 #include "../libretro-common/formats/data_transfer.c"
+#include "../libretro-common/streams/data_transfer_file.c"
 #ifdef HAVE_RPNG
 #include "../libretro-common/formats/png/rpng.c"
 #include "../libretro-common/formats/png/rpng_apng.c"
@@ -770,6 +780,19 @@ VIDEO DRIVER
 #include "../gfx/drivers/d3d12.c"
 #endif
 
+#ifdef HAVE_MF_AUDIO
+#include "../record/record_mf_audio.c"
+#if (defined(HAVE_D3D12) || defined(HAVE_RECORD_VULKAN)) && defined(HAVE_RTMP) && defined(HAVE_RFLV)
+#include "../record/record_stream_gpu.c"
+#ifdef HAVE_D3D12
+#include "../record/record_stream_d3d12.c"
+#endif
+#ifdef HAVE_RECORD_VULKAN
+#include "../record/record_stream_vulkan.c"
+#endif
+#endif
+#endif
+
 #if defined(HAVE_D3D10)
 #include "../gfx/drivers/d3d10.c"
 #endif
@@ -899,6 +922,7 @@ FONTS
 
 #include "../gfx/font_driver.c"
 
+#include "../libretro-common/gfx/font/rtt.c"
 #include "../gfx/drivers_font_renderer/stb.c"
 
 #if defined(HAVE_FREETYPE)
@@ -1617,6 +1641,20 @@ FRONTEND
 
 #include "../core_info.c"
 #include "../core_backup.c"
+#ifdef HAVE_CORE_SIGNATURES
+/* Signatures verify with crypto/pk.c */
+#ifndef HAVE_CRYPTO
+#error "HAVE_CORE_SIGNATURES needs HAVE_CRYPTO"
+#endif
+#include "../core_signature.c"
+#include "../core_signature_io.c"
+#include "../core_trust_runtime.c"
+#include "../core_install_check.c"
+#ifdef HAVE_CORE_LOAD_CHECK
+#include "../core_load_file.c"
+#include "../core_load_check.c"
+#endif
+#endif
 #include "../core_option_manager.c"
 
 #if defined(HAVE_NETWORKING)
@@ -1734,6 +1772,12 @@ RECORDING
 #include "../record/record_avfoundation_worker.c"
 #include "../record/record_avfoundation_session.c"
 #include "../libretro-common/formats/h265/rh265_sps_crop.c"
+#if defined(HAVE_NETWORKING) && defined(HAVE_RTMP) && defined(HAVE_RFLV)
+#include "../record/record_stream_vt.c"
+#include "../record/record_stream_output_vt.c"
+#include "../record/record_vt_packet.c"
+#include "../libretro-common/net/net_wake.c"
+#endif
 #endif
 #ifdef HAVE_FFMPEG
 #include "../record/drivers/record_ffmpeg.c"
@@ -1781,6 +1825,7 @@ NETPLAY
 #include "../network/netplay/netplay_room_parse.c"
 #include "../libretro-common/net/net_compat.c"
 #include "../libretro-common/net/net_socket.c"
+#include "../libretro-common/net/net_resolve.c"
 #include "../libretro-common/net/net_http.c"
 #ifdef HAVE_RTMP
 #include "../libretro-common/net/net_rtmp_chunk.c"
@@ -1792,6 +1837,7 @@ NETPLAY
 #include "../libretro-common/net/net_rtmp_reply.c"
 #include "../libretro-common/net/net_rtmp_session.c"
 #include "../libretro-common/net/net_rtmp_socket.c"
+#include "../libretro-common/net/net_rtmp_client.c"
 #endif
 #ifdef HAVE_IFINFO
 #include "../libretro-common/net/net_ifinfo.c"
@@ -1845,6 +1891,12 @@ DATA RUNLOOP
 #include "../tasks/task_database.c"
 #ifdef HAVE_LIBRETRODB
 #include "../tasks/task_database_cue.c"
+#include "../libretro-common/formats/xdvdfs/xdvdfs.c"
+#include "../libretro-common/formats/zar/zar.c"
+#include "../libretro-common/formats/wux/wux.c"
+#endif
+#if defined(HAVE_LIBRETRODB) || defined(HAVE_CHEEVOS)
+#include "../libretro-common/formats/ciso/ciso.c"
 #endif
 #if defined(HAVE_NETWORKING) && defined(HAVE_MENU)
 #include "../tasks/task_core_updater.c"
@@ -2139,6 +2191,10 @@ CLOUD SYNC
 #include "../network/cloud_sync/nfs.c"
 #endif
 #ifdef HAVE_S3
+/* SigV4 signs with crypto/kdf.c's SHA-256 and HMAC */
+#ifndef HAVE_CRYPTO
+#error "HAVE_S3 needs HAVE_CRYPTO"
+#endif
 #include "../network/cloud_sync/s3.c"
 #endif
 #endif

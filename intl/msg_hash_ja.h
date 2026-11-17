@@ -1588,6 +1588,7 @@ static const struct
    char s_9329c64c[10];
    char s_f8883f70[13];
    char s_09ba892e[7];
+   char s_047623ff[7];
    char s_58b9d895[12];
    char s_0a2aa953[10];
    char s_ffd0dac4[16];
@@ -2022,6 +2023,8 @@ static const struct
    char s_caf61308[7];
    char s_5410e874[7];
    char s_c7a27b20[7];
+   char s_d65a7d95[7];
+   char s_d6611158[7];
    char s_317b17ed[8];
    char s_94c8d15f[8];
    char s_de16b5d2[7];
@@ -2101,10 +2104,6 @@ static const struct
    char s_482ee1f1[13];
    char s_214b7699[22];
    char s_ad14307a[19];
-#if defined(RARCH_MOBILE)
-   char s_774121c7[40];
-   char s_774121c8[40];
-#endif
    char s_b0fb58d3[28];
    char s_b0fb58d4[28];
    char s_92a02470[40];
@@ -2113,6 +2112,7 @@ static const struct
    char s_8f379310[42];
    char s_6a9b757c[25];
    char s_6c52dfb1[21];
+   char s_334daaaa[13];
    char s_9119ef97[40];
 #if defined (WIIU)
 #ifdef WIIU
@@ -2247,7 +2247,6 @@ static const struct
    char s_aa08c6d6[82];
 #endif
 #endif
-   char s_27aef25c[62];
 #ifdef _3DS
    char s_2873cef1[133];
    char s_b4816da6[55];
@@ -7032,6 +7031,7 @@ static const struct
    "\343\202\271\343\202\263\343\202\242",
    "\343\202\267\343\203\252\343\202\242\343\203\253",
    "\350\250\255\345\256\232",
+   "\343\202\277\343\202\260",
    "TGDB \350\251\225\344\276\241",
    "\344\271\227\343\202\212\347\211\251",
    "\343\203\223\343\202\270\343\203\245\343\202\242\343\203\253",
@@ -7637,6 +7637,8 @@ static const struct
    "\350\207\252\345\213\225",
    "\345\270\270\343\201\253",
    "\350\207\252\345\213\225",
+   "\344\270\241\346\226\271",
+   "\343\201\252\343\201\227",
    "180 \345\272\246",
    "270 \345\272\246",
    "\351\200\232\345\270\270",
@@ -7748,12 +7750,6 @@ static const struct
    "\343\203\220\343\203\251\343\203\263\343\202\271",
    "\343\203\221\343\203\225\343\202\251\343\203\274\343\203\236\343\203\263\343\202\271",
    "\343\201\241\343\202\211\343\201\244\343\201\215\346\212\221\345\210\266",
-#if defined(RARCH_MOBILE)
-   "\350\241\250\347\244\272\351\240\230\345\237\237 X \345\272\247\346\250\231\350\243\234\346\255"
-   "\243 (\347\270\246\345\220\221\343\201\215)",
-   "\350\241\250\347\244\272\351\240\230\345\237\237 Y \345\272\247\346\250\231\350\243\234\346\255"
-   "\243 (\347\270\246\345\220\221\343\201\215)",
-#endif
    "\350\241\250\347\244\272\351\240\230\345\237\237 X \345\272\247\346\250\231\350\243\234\346\255"
    "\243",
    "\350\241\250\347\244\272\351\240\230\345\237\237 Y \345\272\247\346\250\231\350\243\234\346\255"
@@ -7768,6 +7764,7 @@ static const struct
    "\343\203\210\346\257\224 (Y \344\275\215\347\275\256)",
    "VI \347\224\273\351\235\242\343\201\256\345\271\205\343\202\222\350\250\255\345\256\232",
    "\345\236\202\347\233\264\345\220\214\346\234\237 (VSync)",
+   "\343\202\267\343\202\271\343\203\206\343\203\240",
    "\345\276\205\346\251\237\345\217\257\350\203\275\343\201\252\343\202\271\343\203\257\343\203\203"
    "\343\203\227\343\203\201\343\202\247\343\203\274\343\203\263",
 #if defined (WIIU)
@@ -8151,9 +8148,6 @@ static const struct
    "\263\343\202\260\343\202\222\344\277\256\346\255\243\343\201\227\343\201\276\343\201\231",
 #endif
 #endif
-   "Bluetooth \343\203\207\343\203\220\343\202\244\343\202\271\343\202\222\343\202\271\343\202\255"
-   "\343\203\243\343\203\263\343\201\227\343\201\246\346\216\245\347\266\232\343\201\227\343\201\276"
-   "\343\201\231\343\200\202",
 #ifdef _3DS
    "\344\270\213\347\224\273\351\235\242\343\202\242\343\202\273\343\203\203\343\203\210\343\201\256"
    "\343\203\207\343\202\243\343\203\254\343\202\257\343\203\210\343\203\252\343\201\247\343\201\231"
@@ -13926,7 +13920,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_ja_blob_check[
-      (sizeof(msg_hash_ja_blob) == (199255u
+      (sizeof(msg_hash_ja_blob) == (199227u
 #ifdef ANDROID
        + 484u
 #endif
@@ -14087,10 +14081,6 @@ typedef char msg_hash_ja_blob_check[
 #endif
 #ifdef HAVE_ODROIDGO2
        + 23u
-#endif
-#if defined(RARCH_MOBILE)
-       + 40u
-       + 40u
 #endif
 #if defined (WIIU)
 #ifdef WIIU
@@ -15840,6 +15830,7 @@ static const msg_hash_id_t msg_hash_ja_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SCORE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SERIAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_SETTING,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TAGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_TGDB_RATING,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VEHICULAR,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_RDB_ENTRY_VISUAL,
@@ -16274,6 +16265,8 @@ static const msg_hash_id_t msg_hash_ja_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_AUTO,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_BOTH,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_TOUCH_HANDS_NONE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED_ROTATED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_NORMAL,
@@ -16353,10 +16346,6 @@ static const msg_hash_id_t msg_hash_ja_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_QUALITY_BALANCED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_QUALITY_PERFORMANCE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VFILTER,
-#if defined(RARCH_MOBILE)
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_PORTRAIT_X,
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_PORTRAIT_Y,
-#endif
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_X,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_BIAS_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_HEIGHT,
@@ -16365,6 +16354,7 @@ static const msg_hash_id_t msg_hash_ja_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VIEWPORT_CUSTOM_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VI_WIDTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VSYNC,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_WAITABLE_SWAPCHAINS,
 #if defined (WIIU)
 #ifdef WIIU
@@ -16499,7 +16489,6 @@ static const msg_hash_id_t msg_hash_ja_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_ERTM_DISABLE,
 #endif
 #endif
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_BLUETOOTH_SETTINGS,
 #ifdef _3DS
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_ASSETS_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_BOTTOM_FONT_COLOR_BLUE,

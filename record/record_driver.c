@@ -44,8 +44,12 @@
 #include "drivers/record_metal.h"
 #include "drivers/record_mediacodec.h"
 #include "drivers/record_avfoundation.h"
+#include "drivers/record_vulkan.h"
 
 static recording_state_t recording_state = {0};
+#ifdef HAVE_RECORD_VULKAN
+static bool recording_core_frame;
+#endif
 
 static const record_driver_t record_null = {
    NULL, /* new */
@@ -73,12 +77,19 @@ const record_driver_t *record_drivers[] = {
 #ifdef HAVE_RECORD_NVENC
    &record_nvenc,
 #endif
+#ifdef HAVE_RECORD_VULKAN
+   &record_vulkan,
+#endif
    &record_null,
    NULL,
 };
 
 void recording_gpu_frame_info(struct video_frame_info *info,bool capture)
 {
+#ifdef HAVE_RECORD_VULKAN
+   if (record_vulkan_frame_info(info, capture))
+      return;
+#endif
 #if defined(HAVE_RECORD_MEDIACODEC)
    record_mediacodec_frame_info(info, capture);
 #elif defined(HAVE_RECORD_METAL)
@@ -98,16 +109,27 @@ void recording_gpu_poll(void)
    record_nvenc_poll();
    record_metal_poll();
    record_mediacodec_poll();
+#ifdef HAVE_RECORD_VULKAN
+   record_vulkan_poll();
+#endif
    recording_gpu_reinit_poll();
 }
 void recording_start_frame(void)
 {
+   bool success;
    if (!recording_state.start_pending || runloop_is_content_switching()
          || content_load_state_in_progress(NULL)
          || runloop_state_get_ptr()->auto_state_load_pending)
       return;
    recording_state.start_pending = false;
-   if (!recording_init())
+#ifdef HAVE_RECORD_VULKAN
+   recording_core_frame = true;
+#endif
+   success = recording_init();
+#ifdef HAVE_RECORD_VULKAN
+   recording_core_frame = false;
+#endif
+   if (!success)
       command_event(CMD_EVENT_RECORD_DEINIT, NULL);
 }
 void recording_gpu_stop(void)
@@ -115,14 +137,25 @@ void recording_gpu_stop(void)
    record_nvenc_stop();
    record_metal_stop();
    record_mediacodec_stop();
+#ifdef HAVE_RECORD_VULKAN
+   record_vulkan_stop();
+#endif
 }
 bool recording_gpu_pending(void)
 {
+#ifdef HAVE_RECORD_VULKAN
+   if (record_vulkan_pending())
+      return true;
+#endif
    return record_nvenc_pending() || record_metal_pending()
       || record_mediacodec_pending();
 }
 bool recording_gpu_reset_pending(void)
 {
+#ifdef HAVE_RECORD_VULKAN
+   if (record_vulkan_pending())
+      return true;
+#endif
    return record_nvenc_pending() || record_metal_pending()
       || record_mediacodec_reset_pending();
 }
@@ -132,10 +165,19 @@ bool recording_gpu_cancel_start(void)
    bool nvenc=record_nvenc_cancel_start();
    bool metal=record_metal_cancel_start();
    bool mediacodec = record_mediacodec_cancel_start();
+#ifdef HAVE_RECORD_VULKAN
+   bool vulkan = record_vulkan_cancel_start();
+   if (vulkan)
+      return true;
+#endif
    return nvenc || metal || mediacodec;
 }
 bool recording_gpu_defer_start(const record_driver_t *driver)
 {
+#ifdef HAVE_RECORD_VULKAN
+   if (driver == &record_vulkan)
+      return record_vulkan_defer_start();
+#endif
    if (driver==&record_nvenc) return record_nvenc_defer_start();
    if (driver==&record_metal) return record_metal_defer_start();
    if (driver == &record_mediacodec) return record_mediacodec_defer_start();
@@ -157,6 +199,50 @@ recording_state_t *recording_state_get_ptr(void)
 const char* config_get_record_driver_options(void)
 {
    return char_list_new_special(STRING_LIST_RECORD_DRIVERS, NULL);
+}
+
+const record_driver_t *recording_driver_find(const char *ident)
+{
+   unsigned i;
+   if (!ident || !*ident)
+      return NULL;
+   for (i = 0; record_drivers[i]; i++)
+      if (strcmp(record_drivers[i]->ident, ident) == 0)
+         return record_drivers[i];
+   return NULL;
+}
+
+bool recording_driver_can_stream(const char *ident)
+{
+   const record_driver_t *driver = recording_driver_find(ident);
+   if (!driver || !driver->init)
+      return false;
+   if (strcmp(driver->ident, "ffmpeg") == 0)
+      return true;
+   if (driver == &record_metal)
+      return record_metal_can_stream();
+   if (driver == &record_nvenc)
+      return record_nvenc_can_stream();
+#ifdef HAVE_RECORD_VULKAN
+   if (driver == &record_vulkan)
+      return record_vulkan_can_stream();
+#endif
+   return false;
+}
+
+bool recording_driver_streaming_mode_supported(const char *ident, unsigned mode)
+{
+   if (mode > STREAMING_MODE_CUSTOM || !recording_driver_can_stream(ident))
+      return false;
+   if (strcmp(ident, "ffmpeg") == 0)
+      return true;
+   if (mode == STREAMING_MODE_LOCAL)
+      return false;
+#ifndef HAVE_SSL
+   if (mode == STREAMING_MODE_FACEBOOK || mode == STREAMING_MODE_KICK)
+      return false;
+#endif
+   return true;
 }
 
 static void find_record_driver(void)
@@ -306,7 +392,8 @@ bool recording_init(void)
    bool nvenc_native = string_is_equal(settings->arrays.record_driver,"nvenc");
    bool metal_native = string_is_equal(settings->arrays.record_driver,"metal");
    bool mc_native = string_is_equal(settings->arrays.record_driver,"mediacodec");
-   bool gpu_native = nvenc_native || metal_native || mc_native;
+   bool vk_native = string_is_equal(settings->arrays.record_driver, "vulkan");
+   bool gpu_native = nvenc_native || metal_native || mc_native || vk_native;
    bool menu_source = false;
 #ifdef HAVE_RECORD_MEDIACODEC
    menu_source = mc_native && current_core_type == CORE_TYPE_DUMMY;
@@ -316,7 +403,11 @@ bool recording_init(void)
       return false;
 
    if (content_load_state_in_progress(NULL)
-         || runloop_st->auto_state_load_pending)
+         || runloop_st->auto_state_load_pending
+#ifdef HAVE_RECORD_VULKAN
+         || (vk_native && !recording_core_frame)
+#endif
+      )
    {
       recording_st->start_pending = true;
       return true;
@@ -327,6 +418,13 @@ bool recording_init(void)
    if (nvenc_native)
    {
       RARCH_ERR("[Recording] Native NVENC recording is unavailable in this build.\n");
+      return false;
+   }
+#endif
+#ifndef HAVE_RECORD_VULKAN
+   if (vk_native)
+   {
+      RARCH_ERR("[Recording] Native Vulkan recording is unavailable in this build.\n");
       return false;
    }
 #endif
@@ -509,18 +607,44 @@ bool recording_init(void)
    if (gpu_native)
    {
       struct video_viewport vp;
-      memset(&vp, 0, sizeof(vp));
-      if (!video_driver_get_viewport_info(&vp)) return false;
-      if (!VIDEO_SCALE_W(menu_source ? vp.full_dims : vp.dims)
-            || !VIDEO_SCALE_H(menu_source ? vp.full_dims : vp.dims))
+      vp.pos        = 0;
+      vp.dims       = 0;
+      vp.full_dims  = 0;
+      if (!video_driver_get_viewport_info(&vp))
+         return false;
+
+      if (menu_source)
       {
-         recording_st->driver = mc_native ? &record_mediacodec
+         if (!VIDEO_SCALE_W(vp.full_dims) || !VIDEO_SCALE_H(vp.full_dims))
+         {
+            recording_st->driver = mc_native ? &record_mediacodec
                : metal_native ? &record_metal : &record_nvenc;
-         return recording_gpu_defer_start(recording_st->driver);
+#ifdef HAVE_RECORD_VULKAN
+            if (vk_native)
+               recording_st->driver = &record_vulkan;
+#endif
+            return recording_gpu_defer_start(recording_st->driver);
+         }
+         params.out_dims     = vp.full_dims;
+         params.fb_dims      = vp.full_dims;
       }
-      params.out_dims = params.fb_dims = menu_source ? vp.full_dims : vp.dims;
-      params.pix_fmt = FFEMU_PIX_ARGB8888;
-      params.aspect_ratio = (float)VIDEO_SCALE_W(params.out_dims)
+      else
+      {
+         if (!VIDEO_SCALE_W(vp.dims) || !VIDEO_SCALE_H(vp.dims))
+         {
+            recording_st->driver = mc_native ? &record_mediacodec
+               : metal_native ? &record_metal : &record_nvenc;
+#ifdef HAVE_RECORD_VULKAN
+            if (vk_native)
+               recording_st->driver = &record_vulkan;
+#endif
+            return recording_gpu_defer_start(recording_st->driver);
+         }
+         params.out_dims     = vp.dims;
+         params.fb_dims      = vp.dims;
+      }
+      params.pix_fmt         = FFEMU_PIX_ARGB8888;
+      params.aspect_ratio    = (float)VIDEO_SCALE_W(params.out_dims)
             / VIDEO_SCALE_H(params.out_dims);
       recording_st->gpu_dims = params.out_dims;
       recording_st->gpu_bgrx = false;

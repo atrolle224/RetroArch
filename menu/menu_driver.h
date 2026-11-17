@@ -80,6 +80,23 @@ RETRO_BEGIN_DECLS
 #define MENU_ENTRIES_GET_SELECTION_BUF_PTR_INTERNAL(menu_st, idx) ((menu_st->entries.list) ? MENU_LIST_GET_SELECTION(menu_st->entries.list, (unsigned)idx) : NULL)
 #define MENU_ENTRIES_NEEDS_REFRESH(menu_st) (!((menu_st->flags & MENU_ST_FLAG_ENTRIES_NONBLOCKING_REFRESH) || !(menu_st->flags & MENU_ST_FLAG_ENTRIES_NEED_REFRESH)))
 
+/* How long a press marks a controller's rows */
+#define MENU_PAD_PRESSED_HOLD_US 1000000
+
+/* Whether a press on the controller in @slot marks its rows now */
+/* menu_state.frame_work: what a frame has to do beyond drawing */
+enum menu_frame_work
+{
+   /* a deferred playlist read (playlist_init_cached_deferred()) */
+   MENU_FRAME_WORK_PLAYLIST = (1 << 0),
+   /* presses to look for: two connected controllers show one name,
+    * or did at the last frame */
+   MENU_FRAME_WORK_PAD_FIND = (1 << 1)
+};
+
+#define MENU_PAD_MARKED(menu_st, slot) ((slot) < MAX_INPUT_DEVICES \
+      && (((menu_st)->pads_marked >> (slot)) & 1))
+
 #define MENU_SETTINGS_CORE_INFO_NONE             0xffff
 #define MENU_SETTINGS_CORE_OPTION_NONE           0xffff
 #define MENU_SETTINGS_CHEEVOS_NONE               0xffff
@@ -128,6 +145,8 @@ enum menu_settings_type
    MENU_SETTING_DROPDOWN_ITEM_INPUT_DEVICE_TYPE,
    MENU_SETTING_DROPDOWN_ITEM_INPUT_DEVICE_INDEX,
    MENU_SETTING_DROPDOWN_ITEM_INPUT_SELECT_RESERVED_DEVICE,
+   MENU_SETTING_DROPDOWN_ITEM_INPUT_PLAYS_AS,
+   MENU_SETTING_DROPDOWN_ITEM_INPUT_PLAYS_AS_ADD,
 #ifdef ANDROID
     MENU_SETTING_DROPDOWN_ITEM_INPUT_SELECT_PHYSICAL_KEYBOARD,
 #endif
@@ -179,6 +198,7 @@ enum menu_settings_type
    MENU_SETTING_ACTION_RESET,
    MENU_SETTING_ACTION_CORE_LOCK,
    MENU_SETTING_ACTION_CORE_SET_STANDALONE_EXEMPT,
+   MENU_SETTING_ACTION_CORE_SIGNATURE_CHECK,
    MENU_SETTING_ACTION_CORE_DELETE,
    MENU_SETTING_ACTION_FAVORITES_DIR, /* "Start Directory" */
    MENU_SETTING_STRING_OPTIONS,
@@ -254,13 +274,20 @@ enum menu_settings_type
    MENU_SETTINGS_INPUT_ANALOG_DPAD_MODE,
    MENU_SETTINGS_INPUT_INPUT_REMAP_PORT,
    MENU_SETTINGS_INPUT_BEGIN,
-   MENU_SETTINGS_INPUT_END = MENU_SETTINGS_INPUT_BEGIN + RARCH_CUSTOM_BIND_LIST_END + 7,
+   /* Begin+ count needs to synced with setting_append_list_input_player_options() header items */
+   MENU_SETTINGS_INPUT_BINDS_BEGIN = MENU_SETTINGS_INPUT_BEGIN + 13,
+   MENU_SETTINGS_INPUT_END = MENU_SETTINGS_INPUT_BINDS_BEGIN + RARCH_CUSTOM_BIND_LIST_END,
    MENU_SETTINGS_INPUT_DESC_BEGIN,
    MENU_SETTINGS_INPUT_DESC_END = MENU_SETTINGS_INPUT_DESC_BEGIN + (RARCH_ANALOG_BIND_LIST_END * MAX_USERS),
    MENU_SETTINGS_INPUT_DESC_KBD_BEGIN,
    MENU_SETTINGS_INPUT_DESC_KBD_END = MENU_SETTINGS_INPUT_DESC_KBD_BEGIN + (RARCH_MAX_KEYS * MAX_USERS),
    MENU_SETTINGS_REMAPPING_PORT_BEGIN,
    MENU_SETTINGS_REMAPPING_PORT_END = MENU_SETTINGS_REMAPPING_PORT_BEGIN + (MAX_USERS),
+   /* Settings > Input > Controllers: a connected controller by its
+    * slot, then from MAX_INPUT_DEVICES the Plays As entry of one that
+    * is gone */
+   MENU_SETTINGS_INPUT_PLAYS_AS_BEGIN,
+   MENU_SETTINGS_INPUT_PLAYS_AS_END = MENU_SETTINGS_INPUT_PLAYS_AS_BEGIN + (MAX_INPUT_DEVICES + MAX_USERS),
 
    MENU_SETTINGS_SUBSYSTEM_LOAD,
    MENU_SETTINGS_SUBSYSTEM_ADD,
@@ -477,6 +504,9 @@ typedef struct
    } last_start_content;
 
    char menu_state_msg[MENU_LABEL_MAX_LENGTH];
+   /* A string that outlives the iteration (msg_hash's) shown in place
+    * of menu_state_msg without copying it there; NULL for the buffer */
+   const char *menu_state_text;
    /* Scratchpad variables. These are used for instance
     * by the filebrowser when having to store intermediary
     * paths (subdirs/previous dirs/current dir/path, etc).
@@ -495,7 +525,22 @@ typedef struct
     * load starts at state_slot_run (-1 for Auto). Consumed by the
     * load it was pushed with, which may run frames later. */
    bool state_slot_run_pending;
+
+   /* The Controllers row to put the cursor back on: a controller's
+    * row type less MENU_SETTINGS_INPUT_PLAYS_AS_BEGIN, and one, or
+    * PLAYS_AS_ROW_HEADSET for Headset Controls (menu_displaylist.c);
+    * 0 for none. */
+   unsigned plays_as_row;
+   /* Port N Controls > Controllers as last made, N and the index of
+    * its first link, while no other list was made since; N is 0 for
+    * none. */
+   unsigned plays_as_page;
+   unsigned plays_as_rows;
 } menu_handle_t;
+
+/* The text the menu's message box shows */
+#define MENU_STATE_TEXT(menu) ((menu)->menu_state_text \
+      ? (menu)->menu_state_text : (menu)->menu_state_msg)
 
 struct menu_state
 {
@@ -514,6 +559,11 @@ struct menu_state
    /* How long a held direction has been repeating, in real time: held
     * Left/Right on a number speeds up by it. Set by menu_event(). */
    retro_time_t action_press_time;
+
+   /* When each controller slot last had a button pressed while a list
+    * of the controllers was shown and two connected ones shared a
+    * name; 0 for not since */
+   retro_time_t pad_pressed_us[MAX_INPUT_DEVICES];
 
    struct menu_bind_state input_binds;     /* uint64_t alignment */
 
@@ -549,6 +599,10 @@ struct menu_state
    /* unsigned alignment */
    unsigned input_dialog_kb_idx;
    unsigned video_screen_selected;
+   /* The slots whose rows read "Pressed", a bit each */
+   uint32_t pads_marked;
+   /* Each slot's buttons and hats down at the last scan, folded */
+   uint32_t pad_down[MAX_INPUT_DEVICES];
    menu_dialog_t dialog_st;
    enum menu_input_dialog_kb_text_type input_dialog_kb_text_type;
 #ifdef HAVE_RUNAHEAD
@@ -598,6 +652,13 @@ struct menu_state
     * that frame at 4312 where this tree allows four thousand. One is
     * looked at a time, on the thread that iterates. */
    menu_entry_t iterate_entry;
+
+   /* A list of the controllers is shown and two connected ones show one
+    * name: Ozone's footer says a press finds one */
+   bool pad_find_hint;
+   /* enum menu_frame_work: a frame with none tests this alone */
+   uint8_t frame_work;
+
 };
 
 typedef struct menu_content_ctx_defer_info
@@ -698,6 +759,9 @@ void menu_explore_set_state(explore_state_t *state);
 #endif
 
 const char *menu_driver_ident(void);
+
+/* Two connected controllers came to show one name, or no longer do. */
+void menu_driver_pads_alike_changed(void);
 
 bool menu_driver_ctl(enum rarch_menu_ctl_state state, void *data);
 
@@ -847,6 +911,11 @@ void menu_input_remap_find_begin(unsigned port);
  * combination. */
 bool menu_input_entry_capture_begin(unsigned number);
 
+/* Settings > Input > Controllers row @row (a slot, or from
+ * MAX_INPUT_DEVICES the entry of a controller that is gone) set to
+ * player @player, 0 for Auto; the controllers are placed again. */
+void menu_input_plays_as_change(unsigned row, unsigned player);
+
 bool menu_input_key_bind_set_mode(
       enum menu_input_binds_ctl_state state, void *data);
 
@@ -862,9 +931,81 @@ size_t menu_playlist_random_selection(
  * inside an open playlist or Explore list. */
 size_t menu_playlists_tab_random_selection(size_t selection);
 
+const char *menu_dialog_firmware_path_line(const struct menu_state *menu_st,
+      const char *line, unsigned *state);
+void menu_dialog_draw_path_underline(const struct menu_state *menu_st,
+      unsigned *state, const char *line, font_data_t *font,
+      gfx_display_t *p_disp, void *userdata, unsigned video_dims,
+      float x, float baseline, uint32_t color);
+
 void menu_dialog_confirm_set(struct menu_state *menu_st,
       unsigned msg, unsigned cmd);
 void menu_dialog_confirm_clear(struct menu_state *menu_st);
+
+enum menu_dialog_icon
+{
+   MENU_DIALOG_ICON_NONE = 0,
+   MENU_DIALOG_ICON_CANCEL,
+   MENU_DIALOG_ICON_OK,
+   MENU_DIALOG_ICON_OK_DIM
+};
+
+typedef struct menu_dialog_buttons
+{
+   unsigned label[MENU_DIALOG_BUTTONS_MAX]; /* enum msg_hash_enums */
+   unsigned count;   /* 0: no confirm is up */
+   int highlight;    /* -1: none */
+   int hover;        /* -1: none */
+   uint8_t icon[MENU_DIALOG_BUTTONS_MAX];   /* enum menu_dialog_icon */
+   bool classic;     /* Cancel and OK */
+} menu_dialog_buttons_t;
+
+/* The confirm box's buttons, left to right. Only for the code that
+ * draws the box: it marks that box drawn for menu_dialog_set_hover() */
+void menu_dialog_get_buttons(struct menu_state *menu_st,
+      menu_dialog_buttons_t *b);
+/* The button under the pointer, -1 for none: drivers set it as they
+ * draw the box from menu_dialog_get_buttons() */
+void menu_dialog_set_hover(struct menu_state *menu_st, int idx);
+/* Places a row of buttons w wide, gap apart, in a box: the first at
+ * its left edge, the last at its right, the spare width shared out
+ * between them; one alone in the middle. Fills x unless it is NULL.
+ * Returns the width the row needs. */
+int menu_dialog_buttons_layout(const int *w, unsigned count, int gap,
+      int box_x, int box_w, int *x);
+
+/* Whether text, len long, is the input dialog's: label and the typed
+ * str (" " for none) on lines of their own. Lets a driver draw text
+ * it kept instead of joining them again every frame. */
+bool menu_input_dialog_text_is(const char *text, size_t len,
+      const char *label, const char *str);
+
+/* A box's button labels as last measured, kept by the driver on the
+ * thread that draws the box */
+typedef struct menu_dialog_label_widths
+{
+   const char *str[MENU_DIALOG_BUTTONS_MAX];
+   int w[MENU_DIALOG_BUTTONS_MAX];
+   font_data_t *font;
+   float size;
+   uint32_t font_generation;
+   unsigned count;
+} menu_dialog_label_widths_t;
+
+/* The width of each button's label in font, which the driver draws at
+ * size, in c: measured again only for a label, the language or the font
+ * that changed since c was filled */
+const int *menu_dialog_label_widths(menu_dialog_label_widths_t *c,
+      const menu_dialog_buttons_t *b, font_data_t *font, float size);
+#ifdef HAVE_CORE_SIGNATURES
+/* Raises the Security Warning's box for the request pending, or takes
+ * it down when none is; true on the frame it went up */
+bool menu_core_warning_iterate(struct menu_state *menu_st);
+#endif
+
+#if defined(HAVE_ONLINE_UPDATER) && defined(HAVE_NETWORKING) && defined(HAVE_COMPRESSION) && defined(HAVE_CONFIGFILE)
+void menu_first_run_download_start(void);
+#endif
 void menu_dialog_confirm(struct menu_state *menu_st);
 
 extern const menu_ctx_driver_t *menu_ctx_drivers[];
