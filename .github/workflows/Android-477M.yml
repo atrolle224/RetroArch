@@ -1,4 +1,4 @@
-# The RG477M build: the AArch64 APK only ("RetroArch 477M", com.retroarch.rg477m), with
+# The RG477M build: the AArch64 APK only ("RetroArch", com.retroarch.rg477m), with
 # the cores for its consoles packed in (linked into its cores folder at start).
 name: Android 477M
 

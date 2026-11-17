@@ -70,7 +70,7 @@ android {
     aarch64 {
       // RG477M build: installs beside the official RetroArch
       applicationIdSuffix '.rg477m'
-      resValue "string", "app_name", "RetroArch 477M"
+      resValue "string", "app_name", "RetroArch"
       buildConfigField "boolean", "PLAY_STORE_BUILD", "false"
 
       dimension "variant"

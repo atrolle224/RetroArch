@@ -7638,7 +7638,18 @@ static bool config_load_file(const char *path, settings_t *settings)
          strlcpy(path_settings[i].ptr, tmp_str, PATH_MAX_LENGTH);
    }
 
-#if !TARGET_OS_IPHONE
+#if defined(ANDROID)
+   /* A shared config can name another app's private folders, which
+    * this app can neither read nor load a core from */
+   if (*g_defaults.dirs[DEFAULT_DIR_CORE])
+      configuration_set_string(settings,
+            settings->paths.directory_libretro,
+            g_defaults.dirs[DEFAULT_DIR_CORE]);
+   if (*g_defaults.dirs[DEFAULT_DIR_CORE_INFO])
+      configuration_set_string(settings,
+            settings->paths.path_libretro_info,
+            g_defaults.dirs[DEFAULT_DIR_CORE_INFO]);
+#elif !TARGET_OS_IPHONE
    if (config_get_path(conf, "libretro_directory", tmp_str, sizeof(tmp_str)))
       configuration_set_string(settings,
             settings->paths.directory_libretro, tmp_str);
