@@ -2074,7 +2074,13 @@
 #else
 #define DEFAULT_INPUT_BIND_HOLD 0
 #endif
+#if defined(ANDROID)
+/* RG477M build: Late polling can leave a game started by a frontend
+ * without its controller (the N64 cores most of all) */
+#define DEFAULT_INPUT_POLL_TYPE_BEHAVIOR 0
+#else
 #define DEFAULT_INPUT_POLL_TYPE_BEHAVIOR 2
+#endif
 #define DEFAULT_INPUT_HOTKEY_BLOCK_DELAY 5
 /* Off: the hotkey enabler reaches the game as it is pressed */
 #define DEFAULT_INPUT_HOTKEY_TAP_DELAY 0

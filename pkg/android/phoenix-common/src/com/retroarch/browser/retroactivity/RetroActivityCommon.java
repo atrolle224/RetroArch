@@ -2152,7 +2152,10 @@ public class RetroActivityCommon extends NativeActivity
   private void provisionRg477m() {
     try {
       /* the packed cores' info files, so the menus name them */
-      copyAssets("rg477m/info", new File(getApplicationInfo().dataDir, "info"));
+      copyAssets("rg477m/info", new File(getApplicationInfo().dataDir, "info"), false);
+      /* controller profiles where the app can always read them */
+      copyAssets("rg477m/RetroArch/autoconfig",
+          new File(getApplicationInfo().dataDir, "autoconfig"), true);
     } catch (Exception e) {
     }
     File root = new File(Environment.getExternalStorageDirectory(), "RetroArch");
@@ -2161,21 +2164,59 @@ public class RetroActivityCommon extends NativeActivity
       File marker = new File(root, ".rg477m-" + stamp);
       if (marker.exists()) return;
       if (!root.isDirectory() && !root.mkdirs()) return;
-      copyAssets("rg477m/RetroArch", root);
+      copyAssets("rg477m/RetroArch", root, false);
+      /* the build's own files are kept current; the user's are left alone */
+      copyAssets("rg477m/RetroArch/autoconfig/android",
+          new File(root, "autoconfig/android"), true);
+      copyAssets("rg477m/RetroArch/config/Mupen64Plus-Next",
+          new File(root, "config/Mupen64Plus-Next"), true);
+      setConfigValue(new File(root, "retroarch.cfg"), "input_poll_type_behavior", "0");
       marker.createNewFile();
     } catch (Exception e) {
     }
   }
 
-  private void copyAssets(String path, File to) throws java.io.IOException {
+  /* Sets one key in a config file, keeping every other line */
+  private void setConfigValue(File cfg, String key, String value) throws java.io.IOException {
+    if (!cfg.isFile()) return;
+    java.util.List<String> lines = new java.util.ArrayList<String>();
+    java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(cfg));
+    try {
+      String l;
+      while ((l = in.readLine()) != null)
+        lines.add(l);
+    } finally {
+      in.close();
+    }
+    String line = key + " = \"" + value + "\"";
+    boolean found = false;
+    for (int i = 0; i < lines.size(); i++) {
+      String l = lines.get(i).trim();
+      if (l.startsWith(key + " ") || l.startsWith(key + "=")) {
+        lines.set(i, line);
+        found = true;
+      }
+    }
+    if (!found)
+      lines.add(line);
+    java.io.FileWriter out = new java.io.FileWriter(cfg);
+    try {
+      for (String l : lines)
+        out.write(l + "\n");
+    } finally {
+      out.close();
+    }
+  }
+
+  private void copyAssets(String path, File to, boolean replace) throws java.io.IOException {
     String[] names = getAssets().list(path);
     if (names != null && names.length > 0) {
       to.mkdirs();
       for (String name : names)
-        copyAssets(path + "/" + name, new File(to, name));
+        copyAssets(path + "/" + name, new File(to, name), replace);
       return;
     }
-    if (to.exists()) return;
+    if (to.exists() && !replace) return;
     InputStream in;
     try {
       in = getAssets().open(path);

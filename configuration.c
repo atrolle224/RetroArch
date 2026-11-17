@@ -7649,6 +7649,11 @@ static bool config_load_file(const char *path, settings_t *settings)
       configuration_set_string(settings,
             settings->paths.path_libretro_info,
             g_defaults.dirs[DEFAULT_DIR_CORE_INFO]);
+   if (     *g_defaults.dirs[DEFAULT_DIR_AUTOCONFIG]
+         && !path_is_directory(settings->paths.directory_autoconfig))
+      configuration_set_string(settings,
+            settings->paths.directory_autoconfig,
+            g_defaults.dirs[DEFAULT_DIR_AUTOCONFIG]);
 #elif !TARGET_OS_IPHONE
    if (config_get_path(conf, "libretro_directory", tmp_str, sizeof(tmp_str)))
       configuration_set_string(settings,
