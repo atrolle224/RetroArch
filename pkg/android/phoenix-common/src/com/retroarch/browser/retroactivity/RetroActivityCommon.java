@@ -2170,6 +2170,8 @@ public class RetroActivityCommon extends NativeActivity
           new File(root, "autoconfig/android"), true);
       copyAssets("rg477m/RetroArch/config/Mupen64Plus-Next",
           new File(root, "config/Mupen64Plus-Next"), true);
+      copyAssets("rg477m/RetroArch/config/remaps/Mupen64Plus-Next",
+          new File(root, "config/remaps/Mupen64Plus-Next"), true);
       setConfigValue(new File(root, "retroarch.cfg"), "input_poll_type_behavior", "0");
       marker.createNewFile();
     } catch (Exception e) {
